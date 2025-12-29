@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>火山视频生成 - Seedance 1.5 Pro</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div id="app">
+        <!-- 登录视图 -->
+        <div id="login-view" class="view active">
+            <div class="login-container">
+                <div class="login-card glass">
+                    <div class="logo">
+                        <span class="logo-icon">🌋</span>
+                        <h1>火山视频生成</h1>
+                        <p class="subtitle">Seedance 1.5 Pro</p>
+                    </div>
+                    <form id="login-form">
+                        <div class="form-group">
+                            <input type="password" id="password-input" placeholder="请输入访问密码" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-block">
+                            <span>登 录</span>
+                        </button>
+                        <p id="login-error" class="error-message"></p>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- 主视图 -->
+        <div id="main-view" class="view">
+            <!-- 顶部导航 -->
+            <nav class="navbar">
+                <div class="nav-brand">
+                    <span class="logo-icon">🌋</span>
+                    <span>火山视频</span>
+                </div>
+                <div class="nav-links">
+                    <button class="nav-btn active" data-view="generate">生成</button>
+                    <button class="nav-btn" data-view="queue">队列</button>
+                    <button class="nav-btn" data-view="settings">设置</button>
+                </div>
+                <button id="logout-btn" class="btn btn-ghost">退出</button>
+            </nav>
+
+            <!-- 内容区域 -->
+            <main class="main-content">
+                <!-- 生成页面 -->
+                <section id="generate-section" class="section active">
+                    <div class="container">
+                        <h2 class="section-title">视频生成</h2>
+
+                        <div class="generate-grid">
+                            <!-- 左侧：输入区域 + 参数 -->
+                            <div class="left-panel">
+                                <!-- 输入区 -->
+                                <div class="input-card glass">
+                                    <h3>📝 内容输入</h3>
+
+                                    <!-- 提示词 -->
+                                    <div class="prompt-section">
+                                        <label>提示词 <span class="optional">(图生视频时可选)</span></label>
+                                        <textarea id="prompt-input"
+                                            placeholder="描述你想生成的视频内容，例如：女孩抱着狐狸，温柔地看向镜头，镜头缓缓拉出，头发被风吹动"
+                                            rows="4"></textarea>
+                                    </div>
+
+                                    <!-- 图片输入按钮 -->
+                                    <div class="image-inputs">
+                                        <div class="image-input-wrapper">
+                                            <label>首帧图片 <span class="optional">(可选)</span></label>
+                                            <div class="image-input" id="first-frame-input">
+                                                <input type="file" id="first-frame-file" accept="image/*" hidden>
+                                                <div class="image-placeholder" id="first-frame-placeholder"
+                                                    onclick="document.getElementById('first-frame-file').click()">
+                                                    <span class="placeholder-icon">🖼️</span>
+                                                    <span class="placeholder-text">点击上传首帧</span>
+                                                </div>
+                                                <div class="image-preview-container" id="first-frame-preview-container"
+                                                    style="display: none;">
+                                                    <img id="first-frame-img" alt="首帧预览">
+                                                    <div class="image-actions">
+                                                        <button type="button" class="img-btn"
+                                                            onclick="previewImage('first-frame')"
+                                                            title="放大预览">🔍</button>
+                                                        <button type="button" class="img-btn danger"
+                                                            onclick="clearImage('first-frame')" title="删除">✕</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <input type="text" id="first-frame-url" class="url-input-small"
+                                                placeholder="或输入 URL">
+                                        </div>
+
+                                        <div class="image-input-wrapper">
+                                            <label>尾帧图片 <span class="optional">(需首帧)</span></label>
+                                            <div class="image-input" id="last-frame-input">
+                                                <input type="file" id="last-frame-file" accept="image/*" hidden>
+                                                <div class="image-placeholder" id="last-frame-placeholder"
+                                                    onclick="document.getElementById('last-frame-file').click()">
+                                                    <span class="placeholder-icon">🖼️</span>
+                                                    <span class="placeholder-text">点击上传尾帧</span>
+                                                </div>
+                                                <div class="image-preview-container" id="last-frame-preview-container"
+                                                    style="display: none;">
+                                                    <img id="last-frame-img" alt="尾帧预览">
+                                                    <div class="image-actions">
+                                                        <button type="button" class="img-btn"
+                                                            onclick="previewImage('last-frame')"
+                                                            title="放大预览">🔍</button>
+                                                        <button type="button" class="img-btn danger"
+                                                            onclick="clearImage('last-frame')" title="删除">✕</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <input type="text" id="last-frame-url" class="url-input-small"
+                                                placeholder="或输入 URL">
+                                        </div>
+                                    </div>
+
+                                    <!-- 生成类型提示 -->
+                                    <div class="generation-type-hint">
+                                        <span class="type-label">检测到:</span>
+                                        <span id="generation-type" class="type-value">待输入</span>
+                                    </div>
+                                </div>
+
+                                <!-- 参数设置 -->
+                                <div class="settings-card glass">
+                                    <h3>⚙️ 生成参数</h3>
+                                    <div class="params-grid">
+                                        <div class="form-group">
+                                            <label>比例</label>
+                                            <select id="ratio">
+                                                <option value="16:9">16:9 横屏</option>
+                                                <option value="4:3">4:3</option>
+                                                <option value="1:1">1:1 方形</option>
+                                                <option value="3:4">3:4</option>
+                                                <option value="9:16">9:16 竖屏</option>
+                                                <option value="21:9">21:9 超宽</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>分辨率</label>
+                                            <select id="resolution">
+                                                <option value="480p">480P</option>
+                                                <option value="720p" selected>720P</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>时长</label>
+                                            <div class="range-group">
+                                                <input type="range" id="duration" min="4" max="12" value="5" step="1">
+                                                <span id="duration-value">5秒</span>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>数量</label>
+                                            <select id="video-count">
+                                                <option value="1">1 个</option>
+                                                <option value="2">2 个</option>
+                                                <option value="3">3 个</option>
+                                                <option value="4">4 个</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>种子</label>
+                                            <input type="number" id="seed" value="-1" placeholder="-1">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>帧率</label>
+                                            <input type="text" value="24fps" disabled class="disabled-input">
+                                        </div>
+                                    </div>
+                                    <div class="checkbox-row">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" id="generate-audio">
+                                            <span>生成声音</span>
+                                        </label>
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" id="watermark">
+                                            <span>水印</span>
+                                        </label>
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" id="camera-fixed">
+                                            <span>固定镜头</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 右侧：账户 + Token 显示 -->
+                            <div class="right-panel">
+                                <!-- 账户选择 -->
+                                <div class="account-card glass">
+                                    <h3>🔑 选择账户</h3>
+                                    <div id="account-list" class="account-list">
+                                        <div class="loading">加载账户列表...</div>
+                                    </div>
+                                </div>
+
+                                <!-- Token 预估 -->
+                                <div class="token-card glass">
+                                    <h3>💰 消耗预估</h3>
+                                    <div class="token-display">
+                                        <div class="token-main">
+                                            <span class="token-number" id="estimated-tokens">0</span>
+                                            <span class="token-unit">tokens</span>
+                                        </div>
+                                        <div class="price-display">
+                                            <span class="price-type" id="price-type">无声</span>
+                                            <span class="price-value" id="estimated-price">¥0.00</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 生成按钮 -->
+                                <button id="generate-btn" class="btn btn-primary btn-generate" disabled>
+                                    <span class="btn-icon">🚀</span>
+                                    <span>生成视频</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 队列页面 -->
+                <section id="queue-section" class="section">
+                    <div class="container">
+                        <div class="section-header">
+                            <h2 class="section-title">任务队列</h2>
+                            <div class="section-actions">
+                                <select id="queue-account-filter">
+                                    <option value="">全部账户</option>
+                                </select>
+                                <select id="queue-status-filter">
+                                    <option value="">全部状态</option>
+                                    <option value="queued">排队中</option>
+                                    <option value="running">进行中</option>
+                                    <option value="succeeded">已完成</option>
+                                    <option value="failed">失败</option>
+                                    <option value="expired">已过期</option>
+                                </select>
+                                <button id="refresh-queue-btn" class="btn btn-ghost">
+                                    <span>🔄</span> 刷新
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="queue-content">
+                            <div id="task-list" class="task-list">
+                                <div class="loading">加载任务列表...</div>
+                            </div>
+
+                            <!-- 任务详情面板 -->
+                            <div id="task-detail" class="task-detail glass" style="display: none;">
+                                <div class="detail-header">
+                                    <h3>任务详情</h3>
+                                    <button class="btn btn-ghost btn-sm" id="close-detail">✕</button>
+                                </div>
+                                <div class="detail-content">
+                                    <div class="detail-row">
+                                        <span class="label">Task ID:</span>
+                                        <span id="detail-task-id" class="value"></span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="label">账户:</span>
+                                        <span id="detail-account" class="value"></span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="label">类型:</span>
+                                        <span id="detail-type" class="value"></span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="label">状态:</span>
+                                        <span id="detail-status" class="value"></span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="label">Token 消耗:</span>
+                                        <span id="detail-tokens" class="value"></span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="label">创建时间:</span>
+                                        <span id="detail-created" class="value"></span>
+                                    </div>
+                                    <div class="detail-row" id="detail-error-row" style="display: none;">
+                                        <span class="label">错误:</span>
+                                        <span id="detail-error" class="value error"></span>
+                                    </div>
+                                </div>
+                                <div class="detail-video" id="detail-video-container" style="display: none;">
+                                    <video id="detail-video" controls></video>
+                                </div>
+                                <div class="detail-actions">
+                                    <button id="sync-task-btn" class="btn btn-ghost">刷新状态</button>
+                                    <a id="download-video-btn" class="btn btn-primary" style="display: none;"
+                                        target="_blank">下载视频</a>
+                                    <button id="delete-task-btn" class="btn btn-danger">删除任务</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 设置页面 -->
+                <section id="settings-section" class="section">
+                    <div class="container">
+                        <div class="section-header">
+                            <h2 class="section-title">账户管理</h2>
+                            <button id="add-account-btn" class="btn btn-primary">
+                                <span>+</span> 添加账户
+                            </button>
+                        </div>
+
+                        <div id="accounts-config-list" class="accounts-config-list">
+                            <div class="loading">加载账户配置...</div>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+
+        <!-- 模态框 -->
+        <div id="modal-overlay" class="modal-overlay">
+            <div id="modal" class="modal glass">
+                <div class="modal-header">
+                    <h3 id="modal-title">标题</h3>
+                    <button class="btn btn-ghost btn-sm modal-close">✕</button>
+                </div>
+                <div id="modal-content" class="modal-content"></div>
+                <div id="modal-footer" class="modal-footer"></div>
+            </div>
+        </div>
+
+        <!-- Toast 通知 -->
+        <div id="toast-container"></div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+
+</html>
