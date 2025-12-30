@@ -253,6 +253,20 @@
                             </div>
                         </div>
 
+                        <!-- 批量操作工具栏 -->
+                        <div class="batch-toolbar" id="batch-toolbar">
+                            <label class="checkbox-label select-all-label">
+                                <input type="checkbox" id="select-all-tasks">
+                                <span>全选</span>
+                            </label>
+                            <span class="selected-count" id="selected-count">已选择 0 项</span>
+                            <div class="batch-actions">
+                                <button id="batch-delete-btn" class="btn btn-danger btn-sm" disabled>
+                                    <span>🗑️</span> 批量删除
+                                </button>
+                            </div>
+                        </div>
+
                         <div class="queue-content">
                             <div id="task-list" class="task-list">
                                 <div class="loading">加载任务列表...</div>

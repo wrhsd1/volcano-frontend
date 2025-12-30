@@ -1208,6 +1208,53 @@ input[type="range"]::-webkit-slider-thumb:hover {
     text-align: center;
 }
 
+/* ======================== 批量操作工具栏 ======================== */
+
+.batch-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.select-all-label {
+    margin: 0;
+}
+
+.selected-count {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.batch-actions {
+    margin-left: auto;
+}
+
+/* 任务项复选框 */
+.task-checkbox {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--primary);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.task-item.batch-selected {
+    border-color: var(--primary);
+    background: rgba(255, 107, 53, 0.1);
+}
+
+.task-item-content {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    width: 100%;
+}
+
 /* ======================== 响应式 ======================== */
 
 @media (max-width: 1024px) {

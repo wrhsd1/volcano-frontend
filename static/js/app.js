@@ -37,6 +37,7 @@ let accounts = [];
 let selectedAccountId = null;
 let tasks = [];
 let selectedTaskId = null;
+let selectedTaskIds = new Set();  // 批量选择的任务ID
 let firstFrameData = null;  // base64 or url
 let lastFrameData = null;
 let pollInterval = null;
@@ -131,6 +132,10 @@ function bindEvents() {
     document.getElementById('refresh-queue-btn').addEventListener('click', loadTasks);
     document.getElementById('queue-account-filter').addEventListener('change', loadTasks);
     document.getElementById('queue-status-filter').addEventListener('change', loadTasks);
+
+    // 批量操作
+    document.getElementById('select-all-tasks').addEventListener('change', handleSelectAll);
+    document.getElementById('batch-delete-btn').addEventListener('click', handleBatchDelete);
 
     // 任务详情
     document.getElementById('close-detail').addEventListener('click', () => {
@@ -754,6 +759,7 @@ function renderTaskList() {
 
     if (tasks.length === 0) {
         container.innerHTML = '<div class="loading">暂无任务</div>';
+        updateBatchUI();
         return;
     }
 
@@ -773,21 +779,30 @@ function renderTaskList() {
             'first_last_frame': '首尾帧生成'
         };
 
+        const isSelected = selectedTaskIds.has(task.task_id);
+
         return `
-            <div class="task-item ${selectedTaskId === task.task_id ? 'selected' : ''}" 
-                 onclick="selectTask('${task.task_id}')">
-                <div class="task-info">
-                    <div class="task-id">${task.task_id}</div>
-                    <div class="task-meta">
-                        <span>${task.account_name || '未知账户'}</span>
-                        <span>${typeMap[task.generation_type] || task.generation_type || '-'}</span>
-                        <span>${formatTime(task.created_at)}</span>
+            <div class="task-item ${selectedTaskId === task.task_id ? 'selected' : ''} ${isSelected ? 'batch-selected' : ''}">
+                <div class="task-item-content">
+                    <input type="checkbox" class="task-checkbox" 
+                           data-task-id="${task.task_id}"
+                           ${isSelected ? 'checked' : ''}
+                           onclick="toggleTaskSelection(event, '${task.task_id}')">
+                    <div class="task-info" onclick="selectTask('${task.task_id}')">
+                        <div class="task-id">${task.task_id}</div>
+                        <div class="task-meta">
+                            <span>${task.account_name || '未知账户'}</span>
+                            <span>${typeMap[task.generation_type] || task.generation_type || '-'}</span>
+                            <span>${formatTime(task.created_at)}</span>
+                        </div>
                     </div>
+                    <span class="task-status ${task.status}">${statusMap[task.status] || task.status}</span>
                 </div>
-                <span class="task-status ${task.status}">${statusMap[task.status] || task.status}</span>
             </div>
         `;
     }).join('');
+
+    updateBatchUI();
 }
 
 function selectTask(taskId) {
@@ -899,6 +914,95 @@ async function deleteSelectedTask() {
         showToast('网络错误', 'error');
     }
 }
+
+// ======================== 批量操作 ========================
+
+function toggleTaskSelection(event, taskId) {
+    event.stopPropagation();  // 防止触发任务选择
+
+    if (selectedTaskIds.has(taskId)) {
+        selectedTaskIds.delete(taskId);
+    } else {
+        selectedTaskIds.add(taskId);
+    }
+
+    renderTaskList();
+}
+
+function handleSelectAll(event) {
+    if (event.target.checked) {
+        // 全选
+        tasks.forEach(task => selectedTaskIds.add(task.task_id));
+    } else {
+        // 取消全选
+        selectedTaskIds.clear();
+    }
+
+    renderTaskList();
+}
+
+function updateBatchUI() {
+    const count = selectedTaskIds.size;
+    document.getElementById('selected-count').textContent = `已选择 ${count} 项`;
+    document.getElementById('batch-delete-btn').disabled = count === 0;
+
+    // 更新全选复选框状态
+    const selectAllCheckbox = document.getElementById('select-all-tasks');
+    if (tasks.length > 0 && count === tasks.length) {
+        selectAllCheckbox.checked = true;
+        selectAllCheckbox.indeterminate = false;
+    } else if (count > 0) {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = true;
+    } else {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = false;
+    }
+}
+
+async function handleBatchDelete() {
+    const count = selectedTaskIds.size;
+    if (count === 0) return;
+
+    if (!confirm(`确定删除选中的 ${count} 个任务？`)) return;
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const taskId of selectedTaskIds) {
+        try {
+            const resp = await fetch(`${API_BASE}/tasks/${taskId}`, {
+                method: 'DELETE',
+                headers: authHeaders()
+            });
+
+            if (resp.ok) {
+                successCount++;
+            } else {
+                failCount++;
+            }
+        } catch (err) {
+            failCount++;
+        }
+    }
+
+    // 清空选择
+    selectedTaskIds.clear();
+    document.getElementById('task-detail').style.display = 'none';
+    selectedTaskId = null;
+
+    // 刷新列表
+    await loadTasks();
+
+    if (failCount === 0) {
+        showToast(`成功删除 ${successCount} 个任务`, 'success');
+    } else {
+        showToast(`删除完成：成功 ${successCount} 个，失败 ${failCount} 个`, 'warning');
+    }
+}
+
+// 暴露到全局
+window.toggleTaskSelection = toggleTaskSelection;
 
 // ======================== 轮询 ========================
 
