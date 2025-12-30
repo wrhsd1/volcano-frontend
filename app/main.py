@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from .database import init_db, close_db
-from .routers import auth, accounts, tasks
+from .routers import auth, accounts, tasks, images
 
 
 @asynccontextmanager
@@ -22,9 +22,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="火山视频生成前端",
-    description="基于火山方舟 Seedance 1.5 Pro API 的视频生成前端",
-    version="1.0.0",
+    title="火山视频/图片生成前端",
+    description="基于火山方舟 Seedance 1.5 Pro / Seedream 4.5 API 的视频和图片生成前端",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -32,6 +32,7 @@ app = FastAPI(
 app.include_router(auth.router)
 app.include_router(accounts.router)
 app.include_router(tasks.router)
+app.include_router(images.router)
 
 # 静态文件
 app.mount("/static", StaticFiles(directory="static"), name="static")

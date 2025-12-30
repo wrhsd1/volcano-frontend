@@ -49,10 +49,14 @@ class TaskResponse(BaseModel):
     task_id: str
     account_id: int
     account_name: Optional[str]
+    task_type: str  # video / image
     status: str
     generation_type: Optional[str]
+    params: Optional[str]  # JSON string with request params
     result_url: Optional[str]
     last_frame_url: Optional[str]
+    result_urls: Optional[str]  # JSON array for images
+    image_count: Optional[int]
     token_usage: Optional[int]
     error_message: Optional[str]
     created_at: Optional[str]
@@ -162,6 +166,9 @@ async def create_task(
     if not account.is_active:
         raise HTTPException(status_code=400, detail="账户已禁用")
     
+    if not account.video_model_id:
+        raise HTTPException(status_code=400, detail="该账户未配置视频生成端点ID")
+    
     # 检查剩余额度
     used = await get_daily_usage(db, account.id)
     tokens_per_video = calculate_tokens(request.resolution, request.ratio, request.duration)
@@ -233,7 +240,7 @@ async def create_task(
         
         # 构建请求体
         api_request = {
-            "model": account.model_id,
+            "model": account.video_model_id,
             "content": content,
             "generate_audio": request.generate_audio,
         }
@@ -272,6 +279,7 @@ async def create_task(
         task = Task(
             task_id=task_id,
             account_id=account.id,
+            task_type="video",
             status="queued",
             generation_type=generation_type,
             params=json.dumps(api_request, ensure_ascii=False),
@@ -293,6 +301,7 @@ async def create_task(
 async def list_tasks(
     account_id: Optional[int] = Query(None, description="按账户筛选"),
     status: Optional[str] = Query(None, description="按状态筛选"),
+    task_type: Optional[str] = Query(None, description="按任务类型筛选 (video/image)"),
     limit: int = Query(50, le=100),
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -304,6 +313,8 @@ async def list_tasks(
         query = query.where(Task.account_id == account_id)
     if status is not None:
         query = query.where(Task.status == status)
+    if task_type is not None:
+        query = query.where(Task.task_type == task_type)
     
     query = query.limit(limit)
     
@@ -332,8 +343,8 @@ async def get_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     
-    # 如果任务未完成，从火山 API 同步状态
-    if task.status in ["queued", "running"]:
+    # 如果任务未完成，从火山 API 同步状态 (仅视频任务需要同步)
+    if task.status in ["queued", "running"] and task.task_type == "video":
         await sync_task_status(task, db)
     
     return TaskResponse(**task.to_dict())
@@ -354,7 +365,9 @@ async def sync_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     
-    await sync_task_status(task, db)
+    # 仅视频任务需要同步
+    if task.task_type == "video":
+        await sync_task_status(task, db)
     
     return TaskResponse(**task.to_dict())
 
@@ -385,7 +398,7 @@ async def delete_task(
 # ======================== 辅助函数 ========================
 
 async def sync_task_status(task: Task, db: AsyncSession):
-    """从火山 API 同步任务状态"""
+    """从火山 API 同步任务状态 (仅用于视频任务)"""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(

@@ -25,8 +25,11 @@ class Settings(BaseSettings):
     # 调试模式
     debug: bool = False
     
-    # 每日 Token 额度
+    # 每日 Token 额度 (视频生成)
     daily_token_limit: int = 1_800_000
+    
+    # 每日图片生成额度
+    daily_image_limit: int = 20
     
     class Config:
         env_file = ".env"

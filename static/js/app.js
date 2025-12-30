@@ -1,12 +1,13 @@
 /**
- * 火山视频生成前端 - 主应用脚本
+ * 火山内容生成前端 - 主应用脚本
+ * 支持视频和图片生成
  */
 
 // ======================== 配置 ========================
 
 const API_BASE = '/api';
 
-// 分辨率像素值 (Seedance 1.5 Pro)
+// 分辨率像素值 (Seedance 1.5 Pro 视频)
 const RESOLUTION_PIXELS = {
     '480p': {
         '16:9': [864, 496],
@@ -26,20 +27,50 @@ const RESOLUTION_PIXELS = {
     }
 };
 
-// 价格 (元/千tokens)
+// 视频价格 (元/千tokens)
 const PRICE_WITH_AUDIO = 0.0160;
 const PRICE_WITHOUT_AUDIO = 0.0080;
+
+// 图片价格 (元/张)
+const IMAGE_PRICE = 0.25;
+
+// 图片尺寸映射 (分辨率 + 比例 -> 像素值)
+const IMAGE_SIZE_MAP = {
+    '2K': {
+        '1:1': '2048x2048',
+        '4:3': '2304x1728',
+        '3:4': '1728x2304',
+        '16:9': '2560x1440',
+        '9:16': '1440x2560',
+        '3:2': '2496x1664',
+        '2:3': '1664x2496',
+        '21:9': '3024x1296'
+    },
+    '4K': {
+        '1:1': '4096x4096',
+        '4:3': '4096x3072',
+        '3:4': '3072x4096',
+        '16:9': '4096x2304',
+        '9:16': '2304x4096',
+        '3:2': '4096x2730',
+        '2:3': '2730x4096',
+        '21:9': '4096x1755'
+    }
+};
 
 // ======================== 状态 ========================
 
 let token = localStorage.getItem('auth_token');
 let accounts = [];
 let selectedAccountId = null;
+let selectedImageAccountId = null;  // 图片模式选中的账户
 let tasks = [];
 let selectedTaskId = null;
 let selectedTaskIds = new Set();  // 批量选择的任务ID
 let firstFrameData = null;  // base64 or url
 let lastFrameData = null;
+let referenceImages = [];  // 图片生成参考图列表
+let currentMode = 'video';  // 'video' | 'image'
 let pollInterval = null;
 
 // ======================== 初始化 ========================
@@ -71,6 +102,13 @@ function bindEvents() {
     document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.addEventListener('click', () => switchSection(btn.dataset.view));
     });
+
+    // 模式切换选项卡
+    document.querySelectorAll('.mode-tab').forEach(tab => {
+        tab.addEventListener('click', () => switchMode(tab.dataset.mode));
+    });
+
+    // ======== 视频生成事件 ========
 
     // 文件上传 - 首帧
     document.getElementById('first-frame-file').addEventListener('change', (e) => {
@@ -128,8 +166,52 @@ function bindEvents() {
     // 生成按钮
     document.getElementById('generate-btn').addEventListener('click', handleGenerate);
 
+    // ======== 图片生成事件 ========
+
+    // 参考图片上传
+    document.getElementById('ref-images-file').addEventListener('change', handleRefImagesSelect);
+
+    // 组图模式切换
+    document.getElementById('sequential-mode').addEventListener('change', (e) => {
+        const maxImagesGroup = document.getElementById('max-images-group');
+        const imageCountGroup = document.getElementById('image-count-group');
+        if (e.target.checked) {
+            maxImagesGroup.style.display = 'block';
+            imageCountGroup.style.display = 'none';
+        } else {
+            maxImagesGroup.style.display = 'none';
+            imageCountGroup.style.display = 'block';
+        }
+        updateImageEstimate();
+    });
+
+    // 组图数量滑块
+    document.getElementById('max-images').addEventListener('input', () => {
+        document.getElementById('max-images-value').textContent = `${document.getElementById('max-images').value}张`;
+        updateImageEstimate();
+    });
+
+    // 生成张数
+    document.getElementById('image-count').addEventListener('change', updateImageEstimate);
+
+    // 分辨率和比例
+    document.getElementById('image-resolution').addEventListener('change', updateImageResolutionDisplay);
+    document.getElementById('image-ratio').addEventListener('change', updateImageResolutionDisplay);
+
+    // 提示词输入
+    document.getElementById('image-prompt-input').addEventListener('input', () => {
+        updateImageGenerationType();
+        updateImageGenerateButton();
+    });
+
+    // 图片生成按钮
+    document.getElementById('image-generate-btn').addEventListener('click', handleImageGenerate);
+
+    // ======== 队列事件 ========
+
     // 队列刷新
     document.getElementById('refresh-queue-btn').addEventListener('click', loadTasks);
+    document.getElementById('queue-type-filter').addEventListener('change', loadTasks);
     document.getElementById('queue-account-filter').addEventListener('change', loadTasks);
     document.getElementById('queue-status-filter').addEventListener('change', loadTasks);
 
@@ -190,6 +272,25 @@ function switchSection(sectionName) {
     }
 }
 
+function switchMode(mode) {
+    currentMode = mode;
+
+    // 更新选项卡样式
+    document.querySelectorAll('.mode-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.mode === mode);
+    });
+
+    // 切换面板
+    document.querySelectorAll('.mode-panel').forEach(panel => {
+        panel.classList.remove('active');
+    });
+    document.getElementById(`${mode}-panel`).classList.add('active');
+
+    // 重新渲染账户列表
+    renderAccountList();
+    renderImageAccountList();
+}
+
 // ======================== 认证 ========================
 
 async function handleLogin(e) {
@@ -233,7 +334,7 @@ function authHeaders() {
     };
 }
 
-// ======================== 文件上传 ========================
+// ======================== 文件上传 (视频) ========================
 
 function handleFileSelect(file, prefix) {
     if (!file.type.startsWith('image/')) {
@@ -316,6 +417,80 @@ function previewImage(prefix) {
 window.clearImage = clearImage;
 window.previewImage = previewImage;
 
+// ======================== 参考图片上传 (图片生成) ========================
+
+function handleRefImagesSelect(e) {
+    const files = Array.from(e.target.files);
+
+    if (referenceImages.length + files.length > 14) {
+        showToast('参考图片最多14张', 'error');
+        return;
+    }
+
+    files.forEach(file => {
+        if (!file.type.startsWith('image/')) {
+            showToast(`${file.name} 不是图片文件`, 'error');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            referenceImages.push({
+                name: file.name,
+                data: ev.target.result
+            });
+            renderRefImages();
+            updateImageGenerationType();
+            updateImageEstimate();
+        };
+        reader.readAsDataURL(file);
+    });
+
+    // 清空input以便重复选择相同文件
+    e.target.value = '';
+}
+
+function renderRefImages() {
+    const container = document.getElementById('ref-images-container');
+    const addBtn = document.getElementById('ref-image-add');
+
+    // 清空现有预览
+    container.innerHTML = '';
+
+    // 添加已有图片
+    referenceImages.forEach((img, index) => {
+        const item = document.createElement('div');
+        item.className = 'ref-image-item';
+        item.innerHTML = `
+            <img src="${img.data}" alt="${img.name}">
+            <button type="button" class="ref-image-remove" onclick="removeRefImage(${index})">✕</button>
+        `;
+        container.appendChild(item);
+    });
+
+    // 添加"添加"按钮
+    if (referenceImages.length < 14) {
+        const addDiv = document.createElement('div');
+        addDiv.className = 'ref-image-add';
+        addDiv.id = 'ref-image-add';
+        addDiv.onclick = () => document.getElementById('ref-images-file').click();
+        addDiv.innerHTML = `
+            <span class="add-icon">+</span>
+            <span class="add-text">添加</span>
+        `;
+        container.appendChild(addDiv);
+    }
+}
+
+function removeRefImage(index) {
+    referenceImages.splice(index, 1);
+    renderRefImages();
+    updateImageGenerationType();
+    updateImageEstimate();
+}
+
+window.removeRefImage = removeRefImage;
+
 // ======================== 生成类型检测 ========================
 
 function updateGenerationType() {
@@ -349,6 +524,14 @@ function updateGenerateButton() {
 
     let canGenerate = selectedAccountId !== null;
 
+    // 检查账户是否有视频model_id
+    if (canGenerate) {
+        const account = accounts.find(a => a.id === selectedAccountId);
+        if (!account || !account.video_model_id) {
+            canGenerate = false;
+        }
+    }
+
     // 检查输入完整性
     if (hasLastFrame && !hasFirstFrame) {
         canGenerate = false; // 缺失首帧
@@ -359,7 +542,58 @@ function updateGenerateButton() {
     btn.disabled = !canGenerate;
 }
 
-// ======================== Token 预估 ========================
+function updateImageGenerationType() {
+    const hasImages = referenceImages.length > 0;
+    let type = '纯文生图';
+
+    if (hasImages) {
+        if (referenceImages.length > 1) {
+            type = `多图融合 (${referenceImages.length}张)`;
+        } else {
+            type = '单图参考';
+        }
+    }
+
+    document.getElementById('image-generation-type').textContent = type;
+}
+
+function updateImageGenerateButton() {
+    const btn = document.getElementById('image-generate-btn');
+    const prompt = document.getElementById('image-prompt-input').value.trim();
+
+    let canGenerate = selectedImageAccountId !== null && prompt.length > 0;
+
+    // 检查账户是否有图片model_id
+    if (canGenerate) {
+        const account = accounts.find(a => a.id === selectedImageAccountId);
+        if (!account || !account.image_model_id) {
+            canGenerate = false;
+        }
+    }
+
+    btn.disabled = !canGenerate;
+}
+
+function updateImageResolutionDisplay() {
+    const resolution = document.getElementById('image-resolution').value;
+    const ratio = document.getElementById('image-ratio').value;
+
+    const sizeValue = getImageSizeValue(resolution, ratio);
+    const displayValue = sizeValue.replace('x', '×');
+
+    document.getElementById('image-resolution-display').textContent = displayValue;
+}
+
+function getImageSizeValue(resolution, ratio) {
+    // 根据分辨率和比例返回实际像素值
+    if (IMAGE_SIZE_MAP[resolution] && IMAGE_SIZE_MAP[resolution][ratio]) {
+        return IMAGE_SIZE_MAP[resolution][ratio];
+    }
+    // 默认返回2K 1:1
+    return '2048x2048';
+}
+
+// ======================== Token/价格 预估 ========================
 
 function calculateTokens(resolution, ratio, duration, fps = 24) {
     if (!RESOLUTION_PIXELS[resolution] || !RESOLUTION_PIXELS[resolution][ratio]) {
@@ -393,6 +627,22 @@ function updateEstimate() {
     document.getElementById('estimated-price').textContent = `¥${price}`;
 }
 
+function updateImageEstimate() {
+    const isSequential = document.getElementById('sequential-mode').checked;
+    let count;
+
+    if (isSequential) {
+        count = parseInt(document.getElementById('max-images').value);
+    } else {
+        count = parseInt(document.getElementById('image-count').value);
+    }
+
+    const price = (count * IMAGE_PRICE).toFixed(2);
+
+    document.getElementById('estimated-images').textContent = count;
+    document.getElementById('image-estimated-price').textContent = `¥${price}`;
+}
+
 // ======================== 账户管理 ========================
 
 async function loadAccounts() {
@@ -408,6 +658,7 @@ async function loadAccounts() {
 
         accounts = await resp.json();
         renderAccountList();
+        renderImageAccountList();
         updateAccountFilters();
     } catch (err) {
         console.error('加载账户失败:', err);
@@ -422,7 +673,15 @@ function renderAccountList() {
         return;
     }
 
-    container.innerHTML = accounts.map(account => {
+    // 过滤有视频model_id的账户
+    const videoAccounts = accounts.filter(a => a.video_model_id);
+
+    if (videoAccounts.length === 0) {
+        container.innerHTML = '<div class="loading">暂无配置视频端点的账户</div>';
+        return;
+    }
+
+    container.innerHTML = videoAccounts.map(account => {
         const percentage = account.remaining_tokens / account.daily_limit * 100;
         let quotaClass = 'remaining';
         if (percentage < 20) quotaClass = 'empty';
@@ -434,16 +693,57 @@ function renderAccountList() {
                 <div class="account-info">
                     <div class="account-name">${account.name}</div>
                     <div class="account-quota">
-                        今日剩余: <span class="${quotaClass}">${(account.remaining_tokens / 10000).toFixed(1)}万</span> / ${(account.daily_limit / 10000).toFixed(0)}万
+                        今日剩余: <span class="${quotaClass}">${(account.remaining_tokens / 10000).toFixed(1)}万</span> / ${(account.daily_limit / 10000).toFixed(0)}万 tokens
                     </div>
                 </div>
             </div>
         `;
     }).join('');
 
-    // 如果未选择账户，默认选择第一个
-    if (selectedAccountId === null && accounts.length > 0) {
-        selectAccount(accounts[0].id);
+    // 如果未选择账户，默认选择第一个有视频能力的
+    if (selectedAccountId === null && videoAccounts.length > 0) {
+        selectAccount(videoAccounts[0].id);
+    }
+}
+
+function renderImageAccountList() {
+    const container = document.getElementById('image-account-list');
+
+    if (accounts.length === 0) {
+        container.innerHTML = '<div class="loading">暂无账户，请先在设置中添加</div>';
+        return;
+    }
+
+    // 过滤有图片model_id的账户
+    const imageAccounts = accounts.filter(a => a.image_model_id);
+
+    if (imageAccounts.length === 0) {
+        container.innerHTML = '<div class="loading">暂无配置图片端点的账户</div>';
+        return;
+    }
+
+    container.innerHTML = imageAccounts.map(account => {
+        const percentage = account.remaining_images / account.daily_image_limit * 100;
+        let quotaClass = 'remaining';
+        if (percentage < 20) quotaClass = 'empty';
+        else if (percentage < 50) quotaClass = 'low';
+
+        return `
+            <div class="account-item ${selectedImageAccountId === account.id ? 'selected' : ''}" 
+                 onclick="selectImageAccount(${account.id})">
+                <div class="account-info">
+                    <div class="account-name">${account.name}</div>
+                    <div class="account-quota">
+                        今日剩余: <span class="${quotaClass}">${account.remaining_images}</span> / ${account.daily_image_limit} 张
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    // 如果未选择账户，默认选择第一个有图片能力的
+    if (selectedImageAccountId === null && imageAccounts.length > 0) {
+        selectImageAccount(imageAccounts[0].id);
     }
 }
 
@@ -453,7 +753,14 @@ function selectAccount(accountId) {
     updateGenerateButton();
 }
 
+function selectImageAccount(accountId) {
+    selectedImageAccountId = accountId;
+    renderImageAccountList();
+    updateImageGenerateButton();
+}
+
 window.selectAccount = selectAccount;
+window.selectImageAccount = selectImageAccount;
 
 function updateAccountFilters() {
     const filter = document.getElementById('queue-account-filter');
@@ -472,10 +779,16 @@ async function loadAccountsConfig() {
     }
 
     container.innerHTML = accounts.map(account => {
-        const percentage = (account.remaining_tokens / account.daily_limit) * 100;
-        let barClass = '';
-        if (percentage < 20) barClass = 'danger';
-        else if (percentage < 50) barClass = 'warning';
+        const tokenPercentage = (account.remaining_tokens / account.daily_limit) * 100;
+        const imagePercentage = (account.remaining_images / account.daily_image_limit) * 100;
+
+        let tokenBarClass = '';
+        if (tokenPercentage < 20) tokenBarClass = 'danger';
+        else if (tokenPercentage < 50) tokenBarClass = 'warning';
+
+        let imageBarClass = '';
+        if (imagePercentage < 20) imageBarClass = 'danger';
+        else if (imagePercentage < 50) imageBarClass = 'warning';
 
         return `
             <div class="account-config-card glass">
@@ -488,19 +801,33 @@ async function loadAccountsConfig() {
                 </div>
                 <div class="account-config-info">
                     <div class="account-config-row">
-                        <span class="label">Model ID</span>
-                        <span class="value">${account.model_id}</span>
+                        <span class="label">视频端点ID</span>
+                        <span class="value">${account.video_model_id || '<span class="text-muted">未配置</span>'}</span>
+                    </div>
+                    <div class="account-config-row">
+                        <span class="label">图片端点ID</span>
+                        <span class="value">${account.image_model_id || '<span class="text-muted">未配置</span>'}</span>
                     </div>
                     <div class="account-config-row">
                         <span class="label">API Key</span>
                         <span class="value masked">********</span>
                     </div>
                     <div class="account-quota-bar">
+                        <div class="quota-label">视频配额</div>
                         <div class="quota-bar">
-                            <div class="fill ${barClass}" style="width: ${percentage}%"></div>
+                            <div class="fill ${tokenBarClass}" style="width: ${tokenPercentage}%"></div>
                         </div>
                         <div class="quota-text">
-                            今日剩余: ${account.remaining_tokens.toLocaleString()} / ${account.daily_limit.toLocaleString()} tokens
+                            ${account.remaining_tokens.toLocaleString()} / ${account.daily_limit.toLocaleString()} tokens
+                        </div>
+                    </div>
+                    <div class="account-quota-bar">
+                        <div class="quota-label">图片配额</div>
+                        <div class="quota-bar">
+                            <div class="fill ${imageBarClass}" style="width: ${imagePercentage}%"></div>
+                        </div>
+                        <div class="quota-text">
+                            ${account.remaining_images} / ${account.daily_image_limit} 张
                         </div>
                     </div>
                 </div>
@@ -516,13 +843,18 @@ function showAddAccountModal() {
             <input type="text" id="modal-account-name" placeholder="如：账户1">
         </div>
         <div class="form-group">
-            <label>Model ID</label>
-            <input type="text" id="modal-model-id" placeholder="如：ep-20251229122405-zxz8f">
+            <label>视频端点ID <span class="optional">(Seedance 1.5 Pro)</span></label>
+            <input type="text" id="modal-video-model-id" placeholder="如：ep-20251229122405-zxz8f">
+        </div>
+        <div class="form-group">
+            <label>图片端点ID <span class="optional">(Seedream 4.5)</span></label>
+            <input type="text" id="modal-image-model-id" placeholder="如：ep-20251229122405-abc12">
         </div>
         <div class="form-group">
             <label>API Key</label>
             <input type="password" id="modal-api-key" placeholder="火山方舟 API Key">
         </div>
+        <p class="hint">至少需要填写一个端点ID（视频或图片）</p>
     `, [
         { text: '取消', class: 'btn-ghost', action: closeModal },
         { text: '添加', class: 'btn-primary', action: createAccount }
@@ -531,11 +863,17 @@ function showAddAccountModal() {
 
 async function createAccount() {
     const name = document.getElementById('modal-account-name').value.trim();
-    const model_id = document.getElementById('modal-model-id').value.trim();
+    const video_model_id = document.getElementById('modal-video-model-id').value.trim() || null;
+    const image_model_id = document.getElementById('modal-image-model-id').value.trim() || null;
     const api_key = document.getElementById('modal-api-key').value.trim();
 
-    if (!name || !model_id || !api_key) {
-        showToast('请填写所有字段', 'error');
+    if (!name || !api_key) {
+        showToast('请填写账户名称和API Key', 'error');
+        return;
+    }
+
+    if (!video_model_id && !image_model_id) {
+        showToast('至少需要填写一个端点ID', 'error');
         return;
     }
 
@@ -543,7 +881,7 @@ async function createAccount() {
         const resp = await fetch(`${API_BASE}/accounts`, {
             method: 'POST',
             headers: authHeaders(),
-            body: JSON.stringify({ name, model_id, api_key })
+            body: JSON.stringify({ name, video_model_id, image_model_id, api_key })
         });
 
         if (resp.ok) {
@@ -574,6 +912,9 @@ async function deleteAccount(accountId) {
             if (selectedAccountId === accountId) {
                 selectedAccountId = null;
             }
+            if (selectedImageAccountId === accountId) {
+                selectedImageAccountId = null;
+            }
             loadAccounts();
             loadAccountsConfig();
         } else {
@@ -597,8 +938,12 @@ function editAccount(accountId) {
             <input type="text" id="modal-account-name" value="${account.name}">
         </div>
         <div class="form-group">
-            <label>Model ID</label>
-            <input type="text" id="modal-model-id" value="${account.model_id}">
+            <label>视频端点ID <span class="optional">(Seedance 1.5 Pro)</span></label>
+            <input type="text" id="modal-video-model-id" value="${account.video_model_id || ''}" placeholder="如：ep-20251229122405-zxz8f">
+        </div>
+        <div class="form-group">
+            <label>图片端点ID <span class="optional">(Seedream 4.5)</span></label>
+            <input type="text" id="modal-image-model-id" value="${account.image_model_id || ''}" placeholder="如：ep-20251229122405-abc12">
         </div>
         <div class="form-group">
             <label>API Key (留空保持不变)</label>
@@ -614,10 +959,11 @@ window.editAccount = editAccount;
 
 async function updateAccount(accountId) {
     const name = document.getElementById('modal-account-name').value.trim();
-    const model_id = document.getElementById('modal-model-id').value.trim();
+    const video_model_id = document.getElementById('modal-video-model-id').value.trim() || null;
+    const image_model_id = document.getElementById('modal-image-model-id').value.trim() || null;
     const api_key = document.getElementById('modal-api-key').value.trim();
 
-    const body = { name, model_id };
+    const body = { name, video_model_id, image_model_id };
     if (api_key) body.api_key = api_key;
 
     try {
@@ -641,7 +987,7 @@ async function updateAccount(accountId) {
     }
 }
 
-// ======================== 任务管理 ========================
+// ======================== 视频任务生成 ========================
 
 async function handleGenerate() {
     const prompt = document.getElementById('prompt-input').value.trim();
@@ -707,7 +1053,7 @@ async function handleGenerate() {
 
         if (resp.ok) {
             const tasks = await resp.json();
-            showToast(`成功创建 ${tasks.length} 个任务`, 'success');
+            showToast(`成功创建 ${tasks.length} 个视频任务`, 'success');
 
             // 刷新账户额度和任务列表
             loadAccounts();
@@ -728,11 +1074,86 @@ async function handleGenerate() {
     }
 }
 
+// ======================== 图片任务生成 ========================
+
+async function handleImageGenerate() {
+    const prompt = document.getElementById('image-prompt-input').value.trim();
+
+    if (!prompt) {
+        showToast('请输入图片描述', 'error');
+        return;
+    }
+
+    if (!selectedImageAccountId) {
+        showToast('请选择账户', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('image-generate-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="btn-icon">⏳</span><span>生成中...</span>';
+
+    try {
+        const isSequential = document.getElementById('sequential-mode').checked;
+        const resolution = document.getElementById('image-resolution').value;
+        const ratio = document.getElementById('image-ratio').value;
+        const optimizePrompt = document.getElementById('optimize-prompt').checked;
+
+        const body = {
+            account_id: selectedImageAccountId,
+            prompt: prompt,
+            size: getImageSizeValue(resolution, ratio),
+            watermark: document.getElementById('image-watermark').checked,
+            sequential_image_generation: isSequential ? 'auto' : 'disabled',
+            optimize_prompt: optimizePrompt,
+        };
+
+        if (isSequential) {
+            body.max_images = parseInt(document.getElementById('max-images').value);
+        } else {
+            body.count = parseInt(document.getElementById('image-count').value);
+        }
+
+        // 添加参考图片
+        if (referenceImages.length > 0) {
+            body.images = referenceImages.map(img => img.data);
+        }
+
+        const resp = await fetch(`${API_BASE}/images`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify(body)
+        });
+
+        if (resp.ok) {
+            const createdTasks = await resp.json();
+            showToast(`已提交 ${createdTasks.length} 个图片任务，正在生成中...`, 'success');
+
+            // 切换到队列页面
+            switchSection('queue');
+        } else {
+            const data = await resp.json();
+            showToast(data.detail || '生成失败', 'error');
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('网络错误', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="btn-icon">🎨</span><span>生成图片</span>';
+        updateImageGenerateButton();
+    }
+}
+
+// ======================== 任务管理 ========================
+
 async function loadTasks() {
+    const typeFilter = document.getElementById('queue-type-filter').value;
     const accountFilter = document.getElementById('queue-account-filter').value;
     const statusFilter = document.getElementById('queue-status-filter').value;
 
     let url = `${API_BASE}/tasks?limit=50`;
+    if (typeFilter) url += `&task_type=${typeFilter}`;
     if (accountFilter) url += `&account_id=${accountFilter}`;
     if (statusFilter) url += `&status=${statusFilter}`;
 
@@ -776,8 +1197,13 @@ function renderTaskList() {
         const typeMap = {
             'text_to_video': '文生视频',
             'first_frame': '首帧生成',
-            'first_last_frame': '首尾帧生成'
+            'first_last_frame': '首尾帧生成',
+            'text_to_image': '文生图',
+            'image_to_image': '图生图',
+            'multi_image': '多图融合'
         };
+
+        const taskTypeIcon = task.task_type === 'video' ? '🎬' : '🖼️';
 
         const isSelected = selectedTaskIds.has(task.task_id);
 
@@ -789,7 +1215,10 @@ function renderTaskList() {
                            ${isSelected ? 'checked' : ''}
                            onclick="toggleTaskSelection(event, '${task.task_id}')">
                     <div class="task-info" onclick="selectTask('${task.task_id}')">
-                        <div class="task-id">${task.task_id}</div>
+                        <div class="task-id">
+                            <span class="task-type-icon">${taskTypeIcon}</span>
+                            ${task.task_id}
+                        </div>
                         <div class="task-meta">
                             <span>${task.account_name || '未知账户'}</span>
                             <span>${typeMap[task.generation_type] || task.generation_type || '-'}</span>
@@ -823,7 +1252,10 @@ async function showTaskDetail(taskId) {
     const typeMap = {
         'text_to_video': '文生视频',
         'first_frame': '首帧生成',
-        'first_last_frame': '首尾帧生成'
+        'first_last_frame': '首尾帧生成',
+        'text_to_image': '文生图',
+        'image_to_image': '图生图',
+        'multi_image': '多图融合'
     };
 
     const statusMap = {
@@ -835,12 +1267,118 @@ async function showTaskDetail(taskId) {
         'expired': '已过期'
     };
 
+    const taskTypeMap = {
+        'video': '🎬 视频',
+        'image': '🖼️ 图片'
+    };
+
     document.getElementById('detail-task-id').textContent = task.task_id;
+    document.getElementById('detail-task-type').textContent = taskTypeMap[task.task_type] || task.task_type;
     document.getElementById('detail-account').textContent = task.account_name || '未知';
     document.getElementById('detail-type').textContent = typeMap[task.generation_type] || task.generation_type || '-';
     document.getElementById('detail-status').textContent = statusMap[task.status] || task.status;
-    document.getElementById('detail-tokens').textContent = task.token_usage ? task.token_usage.toLocaleString() : '-';
+
+    // 提取并显示提示词
+    const promptRow = document.getElementById('detail-prompt-row');
+    const promptEl = document.getElementById('detail-prompt');
+    let prompt = '';
+
+    if (task.params) {
+        try {
+            const params = JSON.parse(task.params);
+            // 视频任务的 prompt 在 content 数组中
+            if (task.task_type === 'video' && params.content) {
+                const textContent = params.content.find(c => c.type === 'text');
+                if (textContent) {
+                    prompt = textContent.text || '';
+                }
+            } else if (params.prompt) {
+                // 图片任务直接有 prompt 字段
+                prompt = params.prompt;
+            }
+        } catch (e) {
+            console.error('解析params失败:', e);
+        }
+    }
+
+    if (prompt) {
+        promptRow.style.display = 'flex';
+        // 截断过长的prompt
+        const maxLen = 200;
+        if (prompt.length > maxLen) {
+            promptEl.textContent = prompt.substring(0, maxLen) + '...';
+            promptEl.title = prompt;  // 完整内容显示在hover提示中
+        } else {
+            promptEl.textContent = prompt;
+            promptEl.title = '';
+        }
+    } else {
+        promptRow.style.display = 'none';
+    }
+
+    // 提取并显示参考图
+    const refImagesRow = document.getElementById('detail-ref-images-row');
+    const refImagesContainer = document.getElementById('detail-ref-images');
+    let refImages = [];
+
+    if (task.params) {
+        try {
+            const params = JSON.parse(task.params);
+            if (task.task_type === 'video' && params.content) {
+                // 视频任务：从 content 数组中提取图片
+                params.content.forEach(item => {
+                    if (item.type === 'image_url' && item.image_url && item.image_url.url) {
+                        refImages.push({
+                            url: item.image_url.url,
+                            label: item.role === 'first_frame' ? '首帧' : (item.role === 'last_frame' ? '尾帧' : '参考')
+                        });
+                    }
+                });
+            } else if (params.image) {
+                // 图片任务：从 image 字段提取
+                if (Array.isArray(params.image)) {
+                    params.image.forEach((url, idx) => {
+                        refImages.push({ url, label: `参考${idx + 1}` });
+                    });
+                } else {
+                    refImages.push({ url: params.image, label: '参考图' });
+                }
+            }
+        } catch (e) {
+            console.error('解析参考图失败:', e);
+        }
+    }
+
+    if (refImages.length > 0) {
+        refImagesRow.style.display = 'flex';
+        refImagesContainer.innerHTML = refImages.map(img => {
+            // 判断是否是base64（过长不显示完整）
+            const isBase64 = img.url.startsWith('data:');
+            const displayUrl = isBase64 ? img.url : img.url;
+            return `<div class="ref-image-thumb" title="${img.label}">
+                <img src="${displayUrl}" alt="${img.label}" onclick="window.open('${isBase64 ? '' : img.url}', '_blank')">
+                <span class="ref-label">${img.label}</span>
+            </div>`;
+        }).join('');
+    } else {
+        refImagesRow.style.display = 'none';
+    }
+
     document.getElementById('detail-created').textContent = formatTime(task.created_at);
+
+    // Token/图片数量显示
+    const tokensRow = document.getElementById('detail-tokens-row');
+    const imagesRow = document.getElementById('detail-images-row');
+
+    if (task.task_type === 'video') {
+        tokensRow.style.display = 'flex';
+        imagesRow.style.display = 'none';
+        document.getElementById('detail-tokens').textContent = task.token_usage ? task.token_usage.toLocaleString() : '-';
+    } else {
+        tokensRow.style.display = 'none';
+        imagesRow.style.display = 'flex';
+        document.getElementById('detail-images-count').textContent = task.image_count || '-';
+    }
 
     // 错误信息
     const errorRow = document.getElementById('detail-error-row');
@@ -854,14 +1392,41 @@ async function showTaskDetail(taskId) {
     // 视频预览
     const videoContainer = document.getElementById('detail-video-container');
     const downloadBtn = document.getElementById('download-video-btn');
+    const imagesContainer = document.getElementById('detail-images-container');
 
-    if (task.result_url) {
+    if (task.task_type === 'video' && task.result_url) {
         videoContainer.style.display = 'block';
+        imagesContainer.style.display = 'none';
         document.getElementById('detail-video').src = task.result_url;
         downloadBtn.href = task.result_url;
         downloadBtn.style.display = 'inline-flex';
+    } else if (task.task_type === 'image' && task.result_urls) {
+        videoContainer.style.display = 'none';
+        imagesContainer.style.display = 'block';
+        downloadBtn.style.display = 'none';
+
+        try {
+            const images = JSON.parse(task.result_urls);
+            const grid = document.getElementById('detail-images-grid');
+            grid.innerHTML = images.map((img, idx) => {
+                if (img.error) {
+                    return `<div class="image-result-item error">
+                        <span class="error-icon">❌</span>
+                        <span>${img.error}</span>
+                    </div>`;
+                }
+                const url = img.url || '';
+                return `<div class="image-result-item">
+                    <img src="${url}" alt="图片${idx + 1}" onclick="window.open('${url}', '_blank')">
+                    <a href="${url}" target="_blank" class="download-link" title="下载">⬇️</a>
+                </div>`;
+            }).join('');
+        } catch (e) {
+            console.error('解析图片结果失败:', e);
+        }
     } else {
         videoContainer.style.display = 'none';
+        imagesContainer.style.display = 'none';
         downloadBtn.style.display = 'none';
     }
 }
@@ -1013,19 +1578,22 @@ function startPolling() {
     let previousStatuses = {};
 
     pollInterval = setInterval(async () => {
-        // 检查是否有进行中的任务
-        const runningTasks = tasks.filter(t => t.status === 'queued' || t.status === 'running');
+        // 检查所有进行中的任务 (视频和图片)
+        const runningVideoTasks = tasks.filter(t => t.task_type === 'video' && (t.status === 'queued' || t.status === 'running'));
+        const runningImageTasks = tasks.filter(t => t.task_type === 'image' && t.status === 'running');
 
-        if (runningTasks.length > 0) {
-            console.log(`[轮询] 同步 ${runningTasks.length} 个进行中的任务...`);
+        const hasRunningTasks = runningVideoTasks.length > 0 || runningImageTasks.length > 0;
+
+        if (hasRunningTasks) {
+            console.log(`[轮询] 视频任务: ${runningVideoTasks.length}, 图片任务: ${runningImageTasks.length}`);
 
             // 记录当前状态
             tasks.forEach(t => {
                 previousStatuses[t.task_id] = t.status;
             });
 
-            // 同步所有进行中的任务
-            for (const task of runningTasks) {
+            // 同步视频任务 (需要调用sync接口)
+            for (const task of runningVideoTasks) {
                 try {
                     await fetch(`${API_BASE}/tasks/${task.task_id}/sync`, {
                         method: 'POST',
@@ -1036,17 +1604,18 @@ function startPolling() {
                 }
             }
 
-            // 重新加载任务列表
+            // 重新加载任务列表 (图片任务状态由后端自动更新)
             await loadTasks();
 
             // 检查状态变化，显示通知
             tasks.forEach(t => {
                 const prevStatus = previousStatuses[t.task_id];
                 if (prevStatus && prevStatus !== t.status) {
+                    const typeLabel = t.task_type === 'video' ? '视频' : '图片';
                     if (t.status === 'succeeded') {
-                        showToast(`任务 ${t.task_id.slice(-8)} 已完成！`, 'success');
+                        showToast(`${typeLabel}任务 ${t.task_id.slice(-8)} 已完成！`, 'success');
                     } else if (t.status === 'failed') {
-                        showToast(`任务 ${t.task_id.slice(-8)} 失败`, 'error');
+                        showToast(`${typeLabel}任务 ${t.task_id.slice(-8)} 失败`, 'error');
                     }
                 }
             });
@@ -1055,8 +1624,11 @@ function startPolling() {
             if (document.getElementById('queue-section').classList.contains('active') && selectedTaskId) {
                 showTaskDetail(selectedTaskId);
             }
+
+            // 刷新账户配额
+            loadAccounts();
         }
-    }, 5000);
+    }, 3000);  // 图片生成较快，缩短轮询间隔
 }
 
 function stopPolling() {

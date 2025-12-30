@@ -1300,3 +1300,388 @@ input[type="range"]::-webkit-slider-thumb:hover {
         grid-template-columns: 1fr;
     }
 }
+
+/* ======================== 模式选项卡 ======================== */
+
+.mode-tabs {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-lg);
+    padding: var(--spacing-xs);
+    background: var(--bg-card);
+    border-radius: var(--border-radius);
+    width: fit-content;
+}
+
+.mode-tab {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: 12px 24px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: var(--border-radius-sm);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.mode-tab:hover {
+    background: var(--bg-input);
+    color: var(--text-primary);
+}
+
+.mode-tab.active {
+    background: var(--primary);
+    color: white;
+}
+
+.tab-icon {
+    font-size: 18px;
+}
+
+/* 模式面板 */
+.mode-panel {
+    display: none;
+}
+
+.mode-panel.active {
+    display: block;
+}
+
+/* ======================== 图片生成面板 ======================== */
+
+/* 参考图片上传区域 */
+.ref-images-section {
+    margin-bottom: var(--spacing-md);
+}
+
+.ref-images-section>label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-xs);
+}
+
+.ref-images-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md);
+    background: var(--bg-input);
+    border: 2px dashed var(--border-color);
+    border-radius: var(--border-radius-sm);
+    min-height: 100px;
+}
+
+.ref-image-item {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    border-radius: var(--border-radius-sm);
+    overflow: hidden;
+    background: var(--bg-card);
+}
+
+.ref-image-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.ref-image-remove {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    font-size: 12px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.ref-image-item:hover .ref-image-remove {
+    opacity: 1;
+}
+
+.ref-image-add {
+    width: 80px;
+    height: 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    background: var(--bg-card);
+    border: 2px dashed var(--border-color);
+    border-radius: var(--border-radius-sm);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.ref-image-add:hover {
+    border-color: var(--primary);
+    background: rgba(255, 107, 53, 0.05);
+}
+
+.ref-image-add .add-icon {
+    font-size: 24px;
+    color: var(--text-muted);
+}
+
+.ref-image-add .add-text {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.ref-images-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: var(--spacing-xs);
+}
+
+/* 参数网格 - 2列 */
+.params-grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+/* 设置行 */
+.setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-md) 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.setting-toggle {
+    font-weight: 500;
+}
+
+.setting-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* 必填标记 */
+.required {
+    color: var(--danger);
+    font-weight: 400;
+}
+
+/* 储存提示 */
+.storage-hint {
+    margin-top: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: var(--border-radius-sm);
+    font-size: 12px;
+    color: var(--warning);
+    text-align: center;
+}
+
+/* ======================== 图片结果展示 ======================== */
+
+.detail-images {
+    margin-bottom: var(--spacing-lg);
+}
+
+.images-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: var(--spacing-sm);
+}
+
+.image-result-item {
+    position: relative;
+    aspect-ratio: 1;
+    border-radius: var(--border-radius-sm);
+    overflow: hidden;
+    background: var(--bg-input);
+}
+
+.image-result-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+}
+
+.image-result-item img:hover {
+    transform: scale(1.05);
+}
+
+.image-result-item .download-link {
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    width: 28px;
+    height: 28px;
+    background: rgba(0, 0, 0, 0.7);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.image-result-item:hover .download-link {
+    opacity: 1;
+}
+
+.image-result-item.error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-sm);
+    color: var(--danger);
+    font-size: 12px;
+    text-align: center;
+}
+
+.image-result-item .error-icon {
+    font-size: 24px;
+}
+
+/* 任务类型图标 */
+.task-type-icon {
+    margin-right: 4px;
+}
+
+/* 文本样式 */
+.text-muted {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* 配额标签 */
+.quota-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+/* 分辨率显示 */
+.resolution-display {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--bg-input);
+    border-radius: var(--border-radius-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.resolution-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.resolution-value {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--primary);
+    font-family: monospace;
+}
+
+/* 多选框行 */
+.checkbox-row {
+    display: flex;
+    gap: var(--spacing-lg);
+    padding: var(--spacing-sm) 0;
+}
+
+.checkbox-row .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.checkbox-row .checkbox-label:hover {
+    color: var(--text-primary);
+}
+
+.checkbox-row .checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary);
+}
+
+/* 提示词文本样式 */
+.prompt-text {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.4;
+    max-width: 300px;
+    word-break: break-word;
+    cursor: default;
+}
+
+.prompt-text:hover {
+    color: var(--text-primary);
+}
+
+/* 参考图预览 */
+.ref-images-preview {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+    max-width: 350px;
+}
+
+.ref-image-thumb {
+    position: relative;
+    width: 60px;
+    height: 60px;
+    border-radius: var(--border-radius-sm);
+    overflow: hidden;
+    border: 2px solid var(--border-color);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.ref-image-thumb:hover {
+    border-color: var(--primary);
+    transform: scale(1.05);
+}
+
+.ref-image-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.ref-image-thumb .ref-label {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    font-size: 10px;
+    text-align: center;
+    padding: 2px;
+}

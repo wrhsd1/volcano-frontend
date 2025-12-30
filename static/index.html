@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>火山视频生成 - Seedance 1.5 Pro</title>
+    <title>火山内容生成 - 视频 & 图片</title>
     <link rel="stylesheet" href="/static/css/styles.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -17,8 +17,8 @@
                 <div class="login-card glass">
                     <div class="logo">
                         <span class="logo-icon">🌋</span>
-                        <h1>火山视频生成</h1>
-                        <p class="subtitle">Seedance 1.5 Pro</p>
+                        <h1>火山内容生成</h1>
+                        <p class="subtitle">视频 & 图片生成</p>
                     </div>
                     <form id="login-form">
                         <div class="form-group">
@@ -39,7 +39,7 @@
             <nav class="navbar">
                 <div class="nav-brand">
                     <span class="logo-icon">🌋</span>
-                    <span>火山视频</span>
+                    <span>火山生成</span>
                 </div>
                 <div class="nav-links">
                     <button class="nav-btn active" data-view="generate">生成</button>
@@ -54,177 +54,352 @@
                 <!-- 生成页面 -->
                 <section id="generate-section" class="section active">
                     <div class="container">
-                        <h2 class="section-title">视频生成</h2>
+                        <!-- 模式切换选项卡 -->
+                        <div class="mode-tabs">
+                            <button class="mode-tab active" data-mode="video">
+                                <span class="tab-icon">🎬</span>
+                                <span>视频生成</span>
+                            </button>
+                            <button class="mode-tab" data-mode="image">
+                                <span class="tab-icon">🖼️</span>
+                                <span>图片生成</span>
+                            </button>
+                        </div>
 
-                        <div class="generate-grid">
-                            <!-- 左侧：输入区域 + 参数 -->
-                            <div class="left-panel">
-                                <!-- 输入区 -->
-                                <div class="input-card glass">
-                                    <h3>📝 内容输入</h3>
+                        <!-- ============ 视频生成面板 ============ -->
+                        <div id="video-panel" class="mode-panel active">
+                            <div class="generate-grid">
+                                <!-- 左侧：输入区域 + 参数 -->
+                                <div class="left-panel">
+                                    <!-- 输入区 -->
+                                    <div class="input-card glass">
+                                        <h3>📝 内容输入</h3>
 
-                                    <!-- 提示词 -->
-                                    <div class="prompt-section">
-                                        <label>提示词 <span class="optional">(图生视频时可选)</span></label>
-                                        <textarea id="prompt-input"
-                                            placeholder="描述你想生成的视频内容，例如：女孩抱着狐狸，温柔地看向镜头，镜头缓缓拉出，头发被风吹动"
-                                            rows="4"></textarea>
-                                    </div>
-
-                                    <!-- 图片输入按钮 -->
-                                    <div class="image-inputs">
-                                        <div class="image-input-wrapper">
-                                            <label>首帧图片 <span class="optional">(可选)</span></label>
-                                            <div class="image-input" id="first-frame-input">
-                                                <input type="file" id="first-frame-file" accept="image/*" hidden>
-                                                <div class="image-placeholder" id="first-frame-placeholder"
-                                                    onclick="document.getElementById('first-frame-file').click()">
-                                                    <span class="placeholder-icon">🖼️</span>
-                                                    <span class="placeholder-text">点击上传首帧</span>
-                                                </div>
-                                                <div class="image-preview-container" id="first-frame-preview-container"
-                                                    style="display: none;">
-                                                    <img id="first-frame-img" alt="首帧预览">
-                                                    <div class="image-actions">
-                                                        <button type="button" class="img-btn"
-                                                            onclick="previewImage('first-frame')"
-                                                            title="放大预览">🔍</button>
-                                                        <button type="button" class="img-btn danger"
-                                                            onclick="clearImage('first-frame')" title="删除">✕</button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <input type="text" id="first-frame-url" class="url-input-small"
-                                                placeholder="或输入 URL">
+                                        <!-- 提示词 -->
+                                        <div class="prompt-section">
+                                            <label>提示词 <span class="optional">(图生视频时可选)</span></label>
+                                            <textarea id="prompt-input"
+                                                placeholder="描述你想生成的视频内容，例如：女孩抱着狐狸，温柔地看向镜头，镜头缓缓拉出，头发被风吹动"
+                                                rows="4"></textarea>
                                         </div>
 
-                                        <div class="image-input-wrapper">
-                                            <label>尾帧图片 <span class="optional">(需首帧)</span></label>
-                                            <div class="image-input" id="last-frame-input">
-                                                <input type="file" id="last-frame-file" accept="image/*" hidden>
-                                                <div class="image-placeholder" id="last-frame-placeholder"
-                                                    onclick="document.getElementById('last-frame-file').click()">
-                                                    <span class="placeholder-icon">🖼️</span>
-                                                    <span class="placeholder-text">点击上传尾帧</span>
-                                                </div>
-                                                <div class="image-preview-container" id="last-frame-preview-container"
-                                                    style="display: none;">
-                                                    <img id="last-frame-img" alt="尾帧预览">
-                                                    <div class="image-actions">
-                                                        <button type="button" class="img-btn"
-                                                            onclick="previewImage('last-frame')"
-                                                            title="放大预览">🔍</button>
-                                                        <button type="button" class="img-btn danger"
-                                                            onclick="clearImage('last-frame')" title="删除">✕</button>
+                                        <!-- 图片输入按钮 -->
+                                        <div class="image-inputs">
+                                            <div class="image-input-wrapper">
+                                                <label>首帧图片 <span class="optional">(可选)</span></label>
+                                                <div class="image-input" id="first-frame-input">
+                                                    <input type="file" id="first-frame-file" accept="image/*" hidden>
+                                                    <div class="image-placeholder" id="first-frame-placeholder"
+                                                        onclick="document.getElementById('first-frame-file').click()">
+                                                        <span class="placeholder-icon">🖼️</span>
+                                                        <span class="placeholder-text">点击上传首帧</span>
+                                                    </div>
+                                                    <div class="image-preview-container"
+                                                        id="first-frame-preview-container" style="display: none;">
+                                                        <img id="first-frame-img" alt="首帧预览">
+                                                        <div class="image-actions">
+                                                            <button type="button" class="img-btn"
+                                                                onclick="previewImage('first-frame')"
+                                                                title="放大预览">🔍</button>
+                                                            <button type="button" class="img-btn danger"
+                                                                onclick="clearImage('first-frame')"
+                                                                title="删除">✕</button>
+                                                        </div>
                                                     </div>
                                                 </div>
+                                                <input type="text" id="first-frame-url" class="url-input-small"
+                                                    placeholder="或输入 URL">
                                             </div>
-                                            <input type="text" id="last-frame-url" class="url-input-small"
-                                                placeholder="或输入 URL">
+
+                                            <div class="image-input-wrapper">
+                                                <label>尾帧图片 <span class="optional">(需首帧)</span></label>
+                                                <div class="image-input" id="last-frame-input">
+                                                    <input type="file" id="last-frame-file" accept="image/*" hidden>
+                                                    <div class="image-placeholder" id="last-frame-placeholder"
+                                                        onclick="document.getElementById('last-frame-file').click()">
+                                                        <span class="placeholder-icon">🖼️</span>
+                                                        <span class="placeholder-text">点击上传尾帧</span>
+                                                    </div>
+                                                    <div class="image-preview-container"
+                                                        id="last-frame-preview-container" style="display: none;">
+                                                        <img id="last-frame-img" alt="尾帧预览">
+                                                        <div class="image-actions">
+                                                            <button type="button" class="img-btn"
+                                                                onclick="previewImage('last-frame')"
+                                                                title="放大预览">🔍</button>
+                                                            <button type="button" class="img-btn danger"
+                                                                onclick="clearImage('last-frame')" title="删除">✕</button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <input type="text" id="last-frame-url" class="url-input-small"
+                                                    placeholder="或输入 URL">
+                                            </div>
+                                        </div>
+
+                                        <!-- 生成类型提示 -->
+                                        <div class="generation-type-hint">
+                                            <span class="type-label">检测到:</span>
+                                            <span id="generation-type" class="type-value">待输入</span>
                                         </div>
                                     </div>
 
-                                    <!-- 生成类型提示 -->
-                                    <div class="generation-type-hint">
-                                        <span class="type-label">检测到:</span>
-                                        <span id="generation-type" class="type-value">待输入</span>
+                                    <!-- 参数设置 -->
+                                    <div class="settings-card glass">
+                                        <h3>⚙️ 生成参数</h3>
+                                        <div class="params-grid">
+                                            <div class="form-group">
+                                                <label>比例</label>
+                                                <select id="ratio">
+                                                    <option value="16:9">16:9 横屏</option>
+                                                    <option value="4:3">4:3</option>
+                                                    <option value="1:1">1:1 方形</option>
+                                                    <option value="3:4">3:4</option>
+                                                    <option value="9:16">9:16 竖屏</option>
+                                                    <option value="21:9">21:9 超宽</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group">
+                                                <label>分辨率</label>
+                                                <select id="resolution">
+                                                    <option value="480p">480P</option>
+                                                    <option value="720p" selected>720P</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group">
+                                                <label>时长</label>
+                                                <div class="range-group">
+                                                    <input type="range" id="duration" min="4" max="12" value="5"
+                                                        step="1">
+                                                    <span id="duration-value">5秒</span>
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label>数量</label>
+                                                <select id="video-count">
+                                                    <option value="1">1 个</option>
+                                                    <option value="2">2 个</option>
+                                                    <option value="3">3 个</option>
+                                                    <option value="4">4 个</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group">
+                                                <label>种子</label>
+                                                <input type="number" id="seed" value="-1" placeholder="-1">
+                                            </div>
+                                            <div class="form-group">
+                                                <label>帧率</label>
+                                                <input type="text" value="24fps" disabled class="disabled-input">
+                                            </div>
+                                        </div>
+                                        <div class="checkbox-row">
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="generate-audio">
+                                                <span>生成声音</span>
+                                            </label>
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="watermark">
+                                                <span>水印</span>
+                                            </label>
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="camera-fixed">
+                                                <span>固定镜头</span>
+                                            </label>
+                                        </div>
                                     </div>
                                 </div>
 
-                                <!-- 参数设置 -->
-                                <div class="settings-card glass">
-                                    <h3>⚙️ 生成参数</h3>
-                                    <div class="params-grid">
-                                        <div class="form-group">
-                                            <label>比例</label>
-                                            <select id="ratio">
-                                                <option value="16:9">16:9 横屏</option>
-                                                <option value="4:3">4:3</option>
-                                                <option value="1:1">1:1 方形</option>
-                                                <option value="3:4">3:4</option>
-                                                <option value="9:16">9:16 竖屏</option>
-                                                <option value="21:9">21:9 超宽</option>
-                                            </select>
+                                <!-- 右侧：账户 + Token 显示 -->
+                                <div class="right-panel">
+                                    <!-- 账户选择 -->
+                                    <div class="account-card glass">
+                                        <h3>🔑 选择账户</h3>
+                                        <div id="account-list" class="account-list">
+                                            <div class="loading">加载账户列表...</div>
                                         </div>
-                                        <div class="form-group">
-                                            <label>分辨率</label>
-                                            <select id="resolution">
-                                                <option value="480p">480P</option>
-                                                <option value="720p" selected>720P</option>
-                                            </select>
-                                        </div>
-                                        <div class="form-group">
-                                            <label>时长</label>
-                                            <div class="range-group">
-                                                <input type="range" id="duration" min="4" max="12" value="5" step="1">
-                                                <span id="duration-value">5秒</span>
+                                    </div>
+
+                                    <!-- Token 预估 -->
+                                    <div class="token-card glass">
+                                        <h3>💰 消耗预估</h3>
+                                        <div class="token-display">
+                                            <div class="token-main">
+                                                <span class="token-number" id="estimated-tokens">0</span>
+                                                <span class="token-unit">tokens</span>
+                                            </div>
+                                            <div class="price-display">
+                                                <span class="price-type" id="price-type">无声</span>
+                                                <span class="price-value" id="estimated-price">¥0.00</span>
                                             </div>
                                         </div>
-                                        <div class="form-group">
-                                            <label>数量</label>
-                                            <select id="video-count">
-                                                <option value="1">1 个</option>
-                                                <option value="2">2 个</option>
-                                                <option value="3">3 个</option>
-                                                <option value="4">4 个</option>
-                                            </select>
-                                        </div>
-                                        <div class="form-group">
-                                            <label>种子</label>
-                                            <input type="number" id="seed" value="-1" placeholder="-1">
-                                        </div>
-                                        <div class="form-group">
-                                            <label>帧率</label>
-                                            <input type="text" value="24fps" disabled class="disabled-input">
-                                        </div>
                                     </div>
-                                    <div class="checkbox-row">
-                                        <label class="checkbox-label">
-                                            <input type="checkbox" id="generate-audio">
-                                            <span>生成声音</span>
-                                        </label>
-                                        <label class="checkbox-label">
-                                            <input type="checkbox" id="watermark">
-                                            <span>水印</span>
-                                        </label>
-                                        <label class="checkbox-label">
-                                            <input type="checkbox" id="camera-fixed">
-                                            <span>固定镜头</span>
-                                        </label>
-                                    </div>
+
+                                    <!-- 生成按钮 -->
+                                    <button id="generate-btn" class="btn btn-primary btn-generate" disabled>
+                                        <span class="btn-icon">🚀</span>
+                                        <span>生成视频</span>
+                                    </button>
                                 </div>
                             </div>
+                        </div>
 
-                            <!-- 右侧：账户 + Token 显示 -->
-                            <div class="right-panel">
-                                <!-- 账户选择 -->
-                                <div class="account-card glass">
-                                    <h3>🔑 选择账户</h3>
-                                    <div id="account-list" class="account-list">
-                                        <div class="loading">加载账户列表...</div>
+                        <!-- ============ 图片生成面板 ============ -->
+                        <div id="image-panel" class="mode-panel">
+                            <div class="generate-grid">
+                                <!-- 左侧：输入区域 + 参数 -->
+                                <div class="left-panel">
+                                    <!-- 输入区 -->
+                                    <div class="input-card glass">
+                                        <h3>📝 图片描述</h3>
+
+                                        <!-- 提示词 -->
+                                        <div class="prompt-section">
+                                            <label>提示词 <span class="required">(必填)</span></label>
+                                            <textarea id="image-prompt-input"
+                                                placeholder="描述你想生成的图片内容，例如：一只可爱的橘猫坐在窗台上，阳光洒落，艺术风格，高清画质"
+                                                rows="4"></textarea>
+                                        </div>
+
+                                        <!-- 参考图片上传 -->
+                                        <div class="ref-images-section">
+                                            <label>参考图片 <span class="optional">(可选，最多14张)</span></label>
+                                            <div class="ref-images-container" id="ref-images-container">
+                                                <div class="ref-image-add" id="ref-image-add"
+                                                    onclick="document.getElementById('ref-images-file').click()">
+                                                    <input type="file" id="ref-images-file" accept="image/*" multiple
+                                                        hidden>
+                                                    <span class="add-icon">+</span>
+                                                    <span class="add-text">添加图片</span>
+                                                </div>
+                                            </div>
+                                            <div class="ref-images-hint">
+                                                支持拖拽或点击上传，图片将用于风格参考或图生图
+                                            </div>
+                                        </div>
+
+                                        <!-- 生成类型提示 -->
+                                        <div class="generation-type-hint">
+                                            <span class="type-label">模式:</span>
+                                            <span id="image-generation-type" class="type-value">纯文生图</span>
+                                        </div>
+                                    </div>
+
+                                    <!-- 参数设置 -->
+                                    <div class="settings-card glass">
+                                        <h3>⚙️ 生成参数</h3>
+
+                                        <!-- 组图开关 -->
+                                        <div class="setting-row">
+                                            <label class="checkbox-label setting-toggle">
+                                                <input type="checkbox" id="sequential-mode">
+                                                <span>开启组图模式</span>
+                                            </label>
+                                            <span class="setting-hint">一次生成多张关联图片</span>
+                                        </div>
+
+                                        <!-- 组图数量 (组图模式下显示) -->
+                                        <div class="form-group" id="max-images-group" style="display: none;">
+                                            <label>组图数量 <span class="hint">(最多15张)</span></label>
+                                            <div class="range-group">
+                                                <input type="range" id="max-images" min="2" max="15" value="4" step="1">
+                                                <span id="max-images-value">4张</span>
+                                            </div>
+                                        </div>
+
+                                        <!-- 生成张数 (非组图模式下显示) -->
+                                        <div class="form-group" id="image-count-group">
+                                            <label>生成张数</label>
+                                            <select id="image-count">
+                                                <option value="1" selected>1 张</option>
+                                                <option value="2">2 张</option>
+                                                <option value="3">3 张</option>
+                                                <option value="4">4 张</option>
+                                                <option value="5">5 张</option>
+                                                <option value="6">6 张</option>
+                                                <option value="7">7 张</option>
+                                                <option value="8">8 张</option>
+                                                <option value="9">9 张</option>
+                                            </select>
+                                        </div>
+
+                                        <div class="params-grid params-grid-2">
+                                            <div class="form-group">
+                                                <label>分辨率</label>
+                                                <select id="image-resolution">
+                                                    <option value="2K" selected>2K</option>
+                                                    <option value="4K">4K</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group">
+                                                <label>比例</label>
+                                                <select id="image-ratio">
+                                                    <option value="1:1" selected>1:1 方形</option>
+                                                    <option value="4:3">4:3 横屏</option>
+                                                    <option value="3:4">3:4 竖屏</option>
+                                                    <option value="16:9">16:9 横屏</option>
+                                                    <option value="9:16">9:16 竖屏</option>
+                                                    <option value="3:2">3:2 横屏</option>
+                                                    <option value="2:3">2:3 竖屏</option>
+                                                    <option value="21:9">21:9 超宽</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <!-- 分辨率显示 -->
+                                        <div class="resolution-display">
+                                            <span class="resolution-label">输出尺寸:</span>
+                                            <span id="image-resolution-display"
+                                                class="resolution-value">2048×2048</span>
+                                        </div>
+
+                                        <!-- 优化提示词和水印开关 -->
+                                        <div class="checkbox-row">
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="optimize-prompt" checked>
+                                                <span>优化提示词</span>
+                                            </label>
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="image-watermark">
+                                                <span>添加水印</span>
+                                            </label>
+                                        </div>
                                     </div>
                                 </div>
 
-                                <!-- Token 预估 -->
-                                <div class="token-card glass">
-                                    <h3>💰 消耗预估</h3>
-                                    <div class="token-display">
-                                        <div class="token-main">
-                                            <span class="token-number" id="estimated-tokens">0</span>
-                                            <span class="token-unit">tokens</span>
-                                        </div>
-                                        <div class="price-display">
-                                            <span class="price-type" id="price-type">无声</span>
-                                            <span class="price-value" id="estimated-price">¥0.00</span>
+                                <!-- 右侧：账户 + 价格显示 -->
+                                <div class="right-panel">
+                                    <!-- 账户选择 -->
+                                    <div class="account-card glass">
+                                        <h3>🔑 选择账户</h3>
+                                        <div id="image-account-list" class="account-list">
+                                            <div class="loading">加载账户列表...</div>
                                         </div>
                                     </div>
-                                </div>
 
-                                <!-- 生成按钮 -->
-                                <button id="generate-btn" class="btn btn-primary btn-generate" disabled>
-                                    <span class="btn-icon">🚀</span>
-                                    <span>生成视频</span>
-                                </button>
+                                    <!-- 价格预估 -->
+                                    <div class="token-card glass">
+                                        <h3>💰 消耗预估</h3>
+                                        <div class="token-display">
+                                            <div class="token-main">
+                                                <span class="token-number" id="estimated-images">0</span>
+                                                <span class="token-unit">张</span>
+                                            </div>
+                                            <div class="price-display">
+                                                <span class="price-type">¥0.25/张</span>
+                                                <span class="price-value" id="image-estimated-price">¥0.00</span>
+                                            </div>
+                                        </div>
+                                        <div class="storage-hint">
+                                            ⚠️ 图片链接24小时内有效，请及时下载保存
+                                        </div>
+                                    </div>
+
+                                    <!-- 生成按钮 -->
+                                    <button id="image-generate-btn" class="btn btn-primary btn-generate" disabled>
+                                        <span class="btn-icon">🎨</span>
+                                        <span>生成图片</span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -236,6 +411,11 @@
                         <div class="section-header">
                             <h2 class="section-title">任务队列</h2>
                             <div class="section-actions">
+                                <select id="queue-type-filter">
+                                    <option value="">全部类型</option>
+                                    <option value="video">视频</option>
+                                    <option value="image">图片</option>
+                                </select>
                                 <select id="queue-account-filter">
                                     <option value="">全部账户</option>
                                 </select>
@@ -284,20 +464,32 @@
                                         <span id="detail-task-id" class="value"></span>
                                     </div>
                                     <div class="detail-row">
+                                        <span class="label">类型:</span>
+                                        <span id="detail-task-type" class="value"></span>
+                                    </div>
+                                    <div class="detail-row">
                                         <span class="label">账户:</span>
                                         <span id="detail-account" class="value"></span>
                                     </div>
                                     <div class="detail-row">
-                                        <span class="label">类型:</span>
+                                        <span class="label">生成方式:</span>
                                         <span id="detail-type" class="value"></span>
                                     </div>
                                     <div class="detail-row">
                                         <span class="label">状态:</span>
                                         <span id="detail-status" class="value"></span>
                                     </div>
-                                    <div class="detail-row">
+                                    <div class="detail-row" id="detail-prompt-row">
+                                        <span class="label">提示词:</span>
+                                        <span id="detail-prompt" class="value prompt-text"></span>
+                                    </div>
+                                    <div class="detail-row" id="detail-tokens-row">
                                         <span class="label">Token 消耗:</span>
                                         <span id="detail-tokens" class="value"></span>
+                                    </div>
+                                    <div class="detail-row" id="detail-images-row" style="display: none;">
+                                        <span class="label">图片数量:</span>
+                                        <span id="detail-images-count" class="value"></span>
                                     </div>
                                     <div class="detail-row">
                                         <span class="label">创建时间:</span>
@@ -307,9 +499,19 @@
                                         <span class="label">错误:</span>
                                         <span id="detail-error" class="value error"></span>
                                     </div>
+                                    <!-- 参考图显示 -->
+                                    <div class="detail-row" id="detail-ref-images-row" style="display: none;">
+                                        <span class="label">参考图:</span>
+                                        <div id="detail-ref-images" class="ref-images-preview"></div>
+                                    </div>
                                 </div>
+                                <!-- 视频预览 -->
                                 <div class="detail-video" id="detail-video-container" style="display: none;">
                                     <video id="detail-video" controls></video>
+                                </div>
+                                <!-- 图片预览 -->
+                                <div class="detail-images" id="detail-images-container" style="display: none;">
+                                    <div class="images-grid" id="detail-images-grid"></div>
                                 </div>
                                 <div class="detail-actions">
                                     <button id="sync-task-btn" class="btn btn-ghost">刷新状态</button>

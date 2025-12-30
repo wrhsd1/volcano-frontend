@@ -23,7 +23,12 @@ class Account(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False)
-    model_id = Column(String(200), nullable=False)  # 如 ep-20251229122405-zxz8f
+    
+    # 视频生成端点ID (如 ep-20251229122405-zxz8f)
+    video_model_id = Column(String(200), nullable=True)
+    # 图片生成端点ID (如 ep-20251229122405-abc12)
+    image_model_id = Column(String(200), nullable=True)
+    
     api_key = Column(String(500), nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -38,7 +43,8 @@ class Account(Base):
         result = {
             "id": self.id,
             "name": self.name,
-            "model_id": self.model_id,
+            "video_model_id": self.video_model_id,
+            "image_model_id": self.image_model_id,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
@@ -55,7 +61,8 @@ class DailyUsage(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
     usage_date = Column(Date, nullable=False)  # 北京时间日期
-    used_tokens = Column(Integer, default=0)
+    used_tokens = Column(Integer, default=0)   # 视频 token 使用量
+    used_images = Column(Integer, default=0)   # 图片生成数量
     
     # 关联
     account = relationship("Account", back_populates="daily_usages")
@@ -66,6 +73,7 @@ class DailyUsage(Base):
             "account_id": self.account_id,
             "usage_date": self.usage_date.isoformat() if self.usage_date else None,
             "used_tokens": self.used_tokens,
+            "used_images": self.used_images,
         }
 
 
@@ -74,21 +82,33 @@ class Task(Base):
     __tablename__ = "tasks"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_id = Column(String(100), unique=True, nullable=False)  # 火山返回的 cgt-xxx
+    task_id = Column(String(100), unique=True, nullable=False)  # 火山返回的 cgt-xxx 或自定义 img-xxx
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    
+    # 任务类型: video / image
+    task_type = Column(String(20), default="video")
     
     # 状态: queued/running/succeeded/failed/cancelled/expired
     status = Column(String(20), default="queued")
     
-    # 生成类型: text_to_video / first_frame / first_last_frame
+    # 生成类型: 
+    # 视频: text_to_video / first_frame / first_last_frame
+    # 图片: text_to_image / image_to_image / multi_image
     generation_type = Column(String(30), nullable=True)
     
     # 参数 (JSON)
     params = Column(Text, nullable=True)
     
-    # 结果
+    # 视频结果
     result_url = Column(String(1000), nullable=True)
     last_frame_url = Column(String(1000), nullable=True)
+    
+    # 图片结果 (JSON数组，存储多张图片的URL)
+    result_urls = Column(Text, nullable=True)
+    
+    # 图片生成数量
+    image_count = Column(Integer, nullable=True)
+    
     token_usage = Column(Integer, nullable=True)
     error_message = Column(Text, nullable=True)
     
@@ -105,10 +125,14 @@ class Task(Base):
             "task_id": self.task_id,
             "account_id": self.account_id,
             "account_name": self.account.name if self.account else None,
+            "task_type": self.task_type,
             "status": self.status,
             "generation_type": self.generation_type,
+            "params": self.params,
             "result_url": self.result_url,
             "last_frame_url": self.last_frame_url,
+            "result_urls": self.result_urls,
+            "image_count": self.image_count,
             "token_usage": self.token_usage,
             "error_message": self.error_message,
             "created_at": self.created_at.isoformat() if self.created_at else None,
