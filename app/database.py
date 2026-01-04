@@ -29,6 +29,11 @@ class Account(Base):
     # 图片生成端点ID (如 ep-20251229122405-abc12)
     image_model_id = Column(String(200), nullable=True)
     
+    # Banana (Gemini) API 配置
+    banana_base_url = Column(String(500), nullable=True)  # 如 https://generativelanguage.googleapis.com
+    banana_api_key = Column(String(500), nullable=True)
+    banana_model_name = Column(String(100), nullable=True, default="gemini-3-pro-image-preview")
+    
     api_key = Column(String(500), nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -45,12 +50,15 @@ class Account(Base):
             "name": self.name,
             "video_model_id": self.video_model_id,
             "image_model_id": self.image_model_id,
+            "banana_base_url": self.banana_base_url,
+            "banana_model_name": self.banana_model_name,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
         if include_sensitive:
             result["api_key"] = self.api_key
+            result["banana_api_key"] = self.banana_api_key
         return result
 
 
@@ -112,6 +120,9 @@ class Task(Base):
     token_usage = Column(Integer, nullable=True)
     error_message = Column(Text, nullable=True)
     
+    # Banana 多轮对话历史 (JSON数组)
+    conversation_history = Column(Text, nullable=True)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -135,6 +146,7 @@ class Task(Base):
             "image_count": self.image_count,
             "token_usage": self.token_usage,
             "error_message": self.error_message,
+            "conversation_history": self.conversation_history,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

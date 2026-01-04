@@ -40,9 +40,18 @@ class Settings(BaseSettings):
         """SQLite 数据库 URL"""
         return f"sqlite+aiosqlite:///{self.data_dir}/volcano.db"
     
+    @property
+    def banana_images_dir(self) -> str:
+        """Banana 图片存储目录"""
+        return f"{self.data_dir}/banana_images"
+    
     def ensure_data_dir(self):
         """确保数据目录存在"""
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)
+    
+    def ensure_banana_dir(self):
+        """确保 Banana 图片目录存在"""
+        Path(self.banana_images_dir).mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache()

@@ -31,7 +31,28 @@ def migrate_database():
     cursor = conn.cursor()
     
     try:
-        # 检查 accounts 表结构
+        # 检查 accounts 表是否需要添加 Banana 字段
+        cursor.execute("PRAGMA table_info(accounts)")
+        columns = {row[1] for row in cursor.fetchall()}
+        
+        banana_migrations = []
+        if "banana_base_url" not in columns:
+            banana_migrations.append(("banana_base_url", "VARCHAR(500)"))
+        if "banana_api_key" not in columns:
+            banana_migrations.append(("banana_api_key", "VARCHAR(500)"))
+        if "banana_model_name" not in columns:
+            banana_migrations.append(("banana_model_name", "VARCHAR(100) DEFAULT 'gemini-3-pro-image-preview'"))
+        
+        if banana_migrations:
+            print("迁移 accounts 表: 添加 Banana API 字段")
+            for col_name, col_def in banana_migrations:
+                cursor.execute(f"ALTER TABLE accounts ADD COLUMN {col_name} {col_def}")
+                print(f"  ✓ 添加列 {col_name}")
+            print("  ✓ accounts 表 Banana 字段迁移完成")
+        else:
+            print("  accounts 表 Banana 字段无需迁移")
+        
+        # 检查 accounts 表结构 (旧迁移: model_id -> video_model_id)
         cursor.execute("PRAGMA table_info(accounts)")
         columns = {row[1] for row in cursor.fetchall()}
         
@@ -46,6 +67,9 @@ def migrate_database():
                     name VARCHAR(100) NOT NULL,
                     video_model_id VARCHAR(200),
                     image_model_id VARCHAR(200),
+                    banana_base_url VARCHAR(500),
+                    banana_api_key VARCHAR(500),
+                    banana_model_name VARCHAR(100) DEFAULT 'gemini-3-pro-image-preview',
                     api_key VARCHAR(500) NOT NULL,
                     is_active BOOLEAN DEFAULT 1,
                     created_at DATETIME,
@@ -66,7 +90,7 @@ def migrate_database():
             
             print("  ✓ accounts 表迁移完成")
         else:
-            print("  accounts 表无需迁移")
+            print("  accounts 表无需迁移 (model_id)")
         
         # 检查 daily_usages 表结构
         cursor.execute("PRAGMA table_info(daily_usages)")
@@ -90,6 +114,8 @@ def migrate_database():
             migrations_needed.append(("result_urls", "TEXT"))
         if "image_count" not in columns:
             migrations_needed.append(("image_count", "INTEGER"))
+        if "conversation_history" not in columns:
+            migrations_needed.append(("conversation_history", "TEXT"))
         
         if migrations_needed:
             print("迁移 tasks 表: 添加新列")
@@ -102,7 +128,7 @@ def migrate_database():
         
         conn.commit()
         print("\n✅ 数据库迁移成功完成!")
-        print("\n注意: 请登录系统后在设置页面为需要图片生成的账户添加 image_model_id")
+        print("\n注意: 请登录系统后在设置页面为需要 Banana 生图的账户添加 Banana API 配置")
         
     except Exception as e:
         conn.rollback()

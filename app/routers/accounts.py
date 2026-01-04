@@ -31,6 +31,10 @@ class AccountCreate(BaseModel):
     name: str
     video_model_id: Optional[str] = None  # 视频生成端点ID
     image_model_id: Optional[str] = None  # 图片生成端点ID
+    # Banana (Gemini) API 配置
+    banana_base_url: Optional[str] = None
+    banana_api_key: Optional[str] = None
+    banana_model_name: Optional[str] = "gemini-3-pro-image-preview"
     api_key: str
 
 
@@ -39,6 +43,10 @@ class AccountUpdate(BaseModel):
     name: Optional[str] = None
     video_model_id: Optional[str] = None
     image_model_id: Optional[str] = None
+    # Banana (Gemini) API 配置
+    banana_base_url: Optional[str] = None
+    banana_api_key: Optional[str] = None
+    banana_model_name: Optional[str] = None
     api_key: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -49,6 +57,9 @@ class AccountResponse(BaseModel):
     name: str
     video_model_id: Optional[str]
     image_model_id: Optional[str]
+    # Banana (Gemini) API 配置
+    banana_base_url: Optional[str]
+    banana_model_name: Optional[str]
     is_active: bool
     # 视频配额
     daily_limit: int
@@ -172,6 +183,8 @@ async def list_accounts(
             name=account.name,
             video_model_id=account.video_model_id,
             image_model_id=account.image_model_id,
+            banana_base_url=account.banana_base_url,
+            banana_model_name=account.banana_model_name,
             is_active=account.is_active,
             daily_limit=settings.daily_token_limit,
             used_tokens=used_tokens,
@@ -195,14 +208,17 @@ async def create_account(
     """创建新账户"""
     settings = get_settings()
     
-    # 至少需要一个 model_id
-    if not request.video_model_id and not request.image_model_id:
-        raise HTTPException(status_code=400, detail="至少需要提供 video_model_id 或 image_model_id")
+    # 至少需要一个 model_id 或 Banana 配置
+    if not request.video_model_id and not request.image_model_id and not request.banana_base_url:
+        raise HTTPException(status_code=400, detail="至少需要提供 video_model_id、image_model_id 或 Banana API 配置")
     
     account = Account(
         name=request.name,
         video_model_id=request.video_model_id,
         image_model_id=request.image_model_id,
+        banana_base_url=request.banana_base_url,
+        banana_api_key=request.banana_api_key,
+        banana_model_name=request.banana_model_name,
         api_key=request.api_key,
     )
     
@@ -215,6 +231,8 @@ async def create_account(
         name=account.name,
         video_model_id=account.video_model_id,
         image_model_id=account.image_model_id,
+        banana_base_url=account.banana_base_url,
+        banana_model_name=account.banana_model_name,
         is_active=account.is_active,
         daily_limit=settings.daily_token_limit,
         used_tokens=0,
@@ -251,6 +269,8 @@ async def get_account(
         name=account.name,
         video_model_id=account.video_model_id,
         image_model_id=account.image_model_id,
+        banana_base_url=account.banana_base_url,
+        banana_model_name=account.banana_model_name,
         is_active=account.is_active,
         daily_limit=settings.daily_token_limit,
         used_tokens=used_tokens,
@@ -285,6 +305,12 @@ async def update_account(
         account.video_model_id = request.video_model_id
     if request.image_model_id is not None:
         account.image_model_id = request.image_model_id
+    if request.banana_base_url is not None:
+        account.banana_base_url = request.banana_base_url
+    if request.banana_api_key is not None:
+        account.banana_api_key = request.banana_api_key
+    if request.banana_model_name is not None:
+        account.banana_model_name = request.banana_model_name
     if request.api_key is not None:
         account.api_key = request.api_key
     if request.is_active is not None:
@@ -303,6 +329,8 @@ async def update_account(
         name=account.name,
         video_model_id=account.video_model_id,
         image_model_id=account.image_model_id,
+        banana_base_url=account.banana_base_url,
+        banana_model_name=account.banana_model_name,
         is_active=account.is_active,
         daily_limit=settings.daily_token_limit,
         used_tokens=used_tokens,

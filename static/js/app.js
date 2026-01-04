@@ -64,13 +64,15 @@ let token = localStorage.getItem('auth_token');
 let accounts = [];
 let selectedAccountId = null;
 let selectedImageAccountId = null;  // 图片模式选中的账户
+let selectedBananaAccountId = null;  // Banana模式选中的账户
 let tasks = [];
 let selectedTaskId = null;
 let selectedTaskIds = new Set();  // 批量选择的任务ID
 let firstFrameData = null;  // base64 or url
 let lastFrameData = null;
 let referenceImages = [];  // 图片生成参考图列表
-let currentMode = 'video';  // 'video' | 'image'
+let bananaReferenceImages = [];  // Banana参考图列表
+let currentMode = 'video';  // 'video' | 'image' | 'banana'
 let pollInterval = null;
 
 // ======================== 初始化 ========================
@@ -207,6 +209,20 @@ function bindEvents() {
     // 图片生成按钮
     document.getElementById('image-generate-btn').addEventListener('click', handleImageGenerate);
 
+    // ======== Banana生图事件 ========
+
+    // Banana参考图片上传
+    document.getElementById('banana-ref-images-file').addEventListener('change', handleBananaRefImagesSelect);
+
+    // Banana提示词输入
+    document.getElementById('banana-prompt-input').addEventListener('input', () => {
+        updateBananaGenerationType();
+        updateBananaGenerateButton();
+    });
+
+    // Banana生成按钮
+    document.getElementById('banana-generate-btn').addEventListener('click', handleBananaGenerate);
+
     // ======== 队列事件 ========
 
     // 队列刷新
@@ -289,6 +305,12 @@ function switchMode(mode) {
     // 重新渲染账户列表
     renderAccountList();
     renderImageAccountList();
+    renderBananaAccountList();
+
+    // Banana模式特殊初始化
+    if (mode === 'banana') {
+        loadBananaStorage();
+    }
 }
 
 // ======================== 认证 ========================
@@ -851,10 +873,24 @@ function showAddAccountModal() {
             <input type="text" id="modal-image-model-id" placeholder="如：ep-20251229122405-abc12">
         </div>
         <div class="form-group">
-            <label>API Key</label>
+            <label>火山 API Key</label>
             <input type="password" id="modal-api-key" placeholder="火山方舟 API Key">
         </div>
-        <p class="hint">至少需要填写一个端点ID（视频或图片）</p>
+        <hr style="border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 16px 0;">
+        <p class="hint" style="margin-bottom: 12px;">🍌 Banana (Gemini) 配置 (可选)</p>
+        <div class="form-group">
+            <label>Banana Base URL</label>
+            <input type="text" id="modal-banana-base-url" placeholder="如：https://generativelanguage.googleapis.com">
+        </div>
+        <div class="form-group">
+            <label>Banana API Key</label>
+            <input type="password" id="modal-banana-api-key" placeholder="Gemini API Key">
+        </div>
+        <div class="form-group">
+            <label>Banana 模型名</label>
+            <input type="text" id="modal-banana-model-name" placeholder="默认：gemini-3-pro-image-preview">
+        </div>
+        <p class="hint">至少需要填写一个端点ID（视频或图片）或 Banana 配置</p>
     `, [
         { text: '取消', class: 'btn-ghost', action: closeModal },
         { text: '添加', class: 'btn-primary', action: createAccount }
@@ -866,14 +902,17 @@ async function createAccount() {
     const video_model_id = document.getElementById('modal-video-model-id').value.trim() || null;
     const image_model_id = document.getElementById('modal-image-model-id').value.trim() || null;
     const api_key = document.getElementById('modal-api-key').value.trim();
+    const banana_base_url = document.getElementById('modal-banana-base-url').value.trim() || null;
+    const banana_api_key = document.getElementById('modal-banana-api-key').value.trim() || null;
+    const banana_model_name = document.getElementById('modal-banana-model-name').value.trim() || null;
 
     if (!name || !api_key) {
         showToast('请填写账户名称和API Key', 'error');
         return;
     }
 
-    if (!video_model_id && !image_model_id) {
-        showToast('至少需要填写一个端点ID', 'error');
+    if (!video_model_id && !image_model_id && !banana_base_url) {
+        showToast('至少需要填写一个端点ID或Banana配置', 'error');
         return;
     }
 
@@ -881,7 +920,10 @@ async function createAccount() {
         const resp = await fetch(`${API_BASE}/accounts`, {
             method: 'POST',
             headers: authHeaders(),
-            body: JSON.stringify({ name, video_model_id, image_model_id, api_key })
+            body: JSON.stringify({
+                name, video_model_id, image_model_id, api_key,
+                banana_base_url, banana_api_key, banana_model_name
+            })
         });
 
         if (resp.ok) {
@@ -946,8 +988,22 @@ function editAccount(accountId) {
             <input type="text" id="modal-image-model-id" value="${account.image_model_id || ''}" placeholder="如：ep-20251229122405-abc12">
         </div>
         <div class="form-group">
-            <label>API Key (留空保持不变)</label>
+            <label>火山 API Key (留空保持不变)</label>
             <input type="password" id="modal-api-key" placeholder="新的 API Key">
+        </div>
+        <hr style="border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 16px 0;">
+        <p class="hint" style="margin-bottom: 12px;">🍌 Banana (Gemini) 配置</p>
+        <div class="form-group">
+            <label>Banana Base URL</label>
+            <input type="text" id="modal-banana-base-url" value="${account.banana_base_url || ''}" placeholder="如：https://generativelanguage.googleapis.com">
+        </div>
+        <div class="form-group">
+            <label>Banana API Key (留空保持不变)</label>
+            <input type="password" id="modal-banana-api-key" placeholder="新的 Gemini API Key">
+        </div>
+        <div class="form-group">
+            <label>Banana 模型名</label>
+            <input type="text" id="modal-banana-model-name" value="${account.banana_model_name || ''}" placeholder="默认：gemini-3-pro-image-preview">
         </div>
     `, [
         { text: '取消', class: 'btn-ghost', action: closeModal },
@@ -962,9 +1018,13 @@ async function updateAccount(accountId) {
     const video_model_id = document.getElementById('modal-video-model-id').value.trim() || null;
     const image_model_id = document.getElementById('modal-image-model-id').value.trim() || null;
     const api_key = document.getElementById('modal-api-key').value.trim();
+    const banana_base_url = document.getElementById('modal-banana-base-url').value.trim() || null;
+    const banana_api_key = document.getElementById('modal-banana-api-key').value.trim();
+    const banana_model_name = document.getElementById('modal-banana-model-name').value.trim() || null;
 
-    const body = { name, video_model_id, image_model_id };
+    const body = { name, video_model_id, image_model_id, banana_base_url, banana_model_name };
     if (api_key) body.api_key = api_key;
+    if (banana_api_key) body.banana_api_key = banana_api_key;
 
     try {
         const resp = await fetch(`${API_BASE}/accounts/${accountId}`, {
@@ -1200,10 +1260,11 @@ function renderTaskList() {
             'first_last_frame': '首尾帧生成',
             'text_to_image': '文生图',
             'image_to_image': '图生图',
-            'multi_image': '多图融合'
+            'multi_image': '多图融合',
+            'continue': '多轮修改'
         };
 
-        const taskTypeIcon = task.task_type === 'video' ? '🎬' : '🖼️';
+        const taskTypeIcon = task.task_type === 'video' ? '🎬' : (task.task_type === 'banana_image' ? '🍌' : '🖼️');
 
         const isSelected = selectedTaskIds.has(task.task_id);
 
@@ -1424,6 +1485,30 @@ async function showTaskDetail(taskId) {
         } catch (e) {
             console.error('解析图片结果失败:', e);
         }
+    } else if (task.task_type === 'banana_image' && task.result_urls) {
+        // Banana 图片 - 使用本地文件路径
+        videoContainer.style.display = 'none';
+        imagesContainer.style.display = 'block';
+        downloadBtn.style.display = 'none';
+
+        try {
+            const images = JSON.parse(task.result_urls);
+            const grid = document.getElementById('detail-images-grid');
+            grid.innerHTML = images.map((img, idx) => {
+                // 从本地路径提取文件名，构建 API URL
+                const filepath = img.path || '';
+                const filename = filepath.split(/[/\\]/).pop();
+                const imageUrl = `${API_BASE}/banana/images/file/${task.task_id}/${filename}`;
+
+                return `<div class="image-result-item">
+                    <img src="${imageUrl}" alt="Banana图片${idx + 1}" onclick="window.open('${imageUrl}', '_blank')">
+                    <a href="${imageUrl}" download="${filename}" class="download-link" title="下载">⬇️</a>
+                </div>`;
+            }).join('');
+        } catch (e) {
+            console.error('解析Banana图片结果失败:', e);
+            document.getElementById('detail-images-grid').innerHTML = '<div class="loading">解析图片失败</div>';
+        }
     } else {
         videoContainer.style.display = 'none';
         imagesContainer.style.display = 'none';
@@ -1578,9 +1663,9 @@ function startPolling() {
     let previousStatuses = {};
 
     pollInterval = setInterval(async () => {
-        // 检查所有进行中的任务 (视频和图片)
+        // 检查所有进行中的任务 (视频、图片和Banana)
         const runningVideoTasks = tasks.filter(t => t.task_type === 'video' && (t.status === 'queued' || t.status === 'running'));
-        const runningImageTasks = tasks.filter(t => t.task_type === 'image' && t.status === 'running');
+        const runningImageTasks = tasks.filter(t => (t.task_type === 'image' || t.task_type === 'banana_image') && t.status === 'running');
 
         const hasRunningTasks = runningVideoTasks.length > 0 || runningImageTasks.length > 0;
 
@@ -1690,3 +1775,290 @@ function formatTime(isoString) {
         minute: '2-digit'
     });
 }
+
+// ======================== Banana 生图功能 ========================
+
+function renderBananaAccountList() {
+    const container = document.getElementById('banana-account-list');
+
+    if (accounts.length === 0) {
+        container.innerHTML = '<div class="loading">暂无账户，请先在设置中添加</div>';
+        return;
+    }
+
+    // 过滤有 banana_base_url 的账户
+    const bananaAccounts = accounts.filter(a => a.banana_base_url);
+
+    if (bananaAccounts.length === 0) {
+        container.innerHTML = '<div class="loading">暂无配置 Banana API 的账户</div>';
+        return;
+    }
+
+    container.innerHTML = bananaAccounts.map(account => {
+        return `
+            <div class="account-item ${selectedBananaAccountId === account.id ? 'selected' : ''}" 
+                 onclick="selectBananaAccount(${account.id})">
+                <div class="account-info">
+                    <div class="account-name">${account.name}</div>
+                    <div class="account-quota">
+                        模型: <span class="model-hint">${account.banana_model_name || 'gemini-3-pro-image-preview'}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    // 如果未选择账户，默认选择第一个有Banana能力的
+    if (selectedBananaAccountId === null && bananaAccounts.length > 0) {
+        selectBananaAccount(bananaAccounts[0].id);
+    }
+}
+
+function selectBananaAccount(accountId) {
+    selectedBananaAccountId = accountId;
+    renderBananaAccountList();
+    updateBananaGenerateButton();
+
+    // 加载该账户的用量
+    loadBananaUsage(accountId);
+}
+
+window.selectBananaAccount = selectBananaAccount;
+
+function handleBananaRefImagesSelect(e) {
+    const files = Array.from(e.target.files);
+
+    if (bananaReferenceImages.length + files.length > 14) {
+        showToast('参考图片最多14张', 'error');
+        return;
+    }
+
+    files.forEach(file => {
+        if (!file.type.startsWith('image/')) {
+            showToast(`${file.name} 不是图片文件`, 'error');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            bananaReferenceImages.push({
+                name: file.name,
+                data: ev.target.result
+            });
+            renderBananaRefImages();
+            updateBananaGenerationType();
+        };
+        reader.readAsDataURL(file);
+    });
+
+    // 清空input以便重复选择相同文件
+    e.target.value = '';
+}
+
+function renderBananaRefImages() {
+    const container = document.getElementById('banana-ref-images-container');
+
+    // 清空现有预览
+    container.innerHTML = '';
+
+    // 添加已有图片
+    bananaReferenceImages.forEach((img, index) => {
+        const item = document.createElement('div');
+        item.className = 'ref-image-item';
+        item.innerHTML = `
+            <img src="${img.data}" alt="${img.name}">
+            <button type="button" class="ref-image-remove" onclick="removeBananaRefImage(${index})">✕</button>
+        `;
+        container.appendChild(item);
+    });
+
+    // 添加"添加"按钮
+    if (bananaReferenceImages.length < 14) {
+        const addDiv = document.createElement('div');
+        addDiv.className = 'ref-image-add';
+        addDiv.id = 'banana-ref-image-add';
+        addDiv.onclick = () => document.getElementById('banana-ref-images-file').click();
+        addDiv.innerHTML = `
+            <span class="add-icon">+</span>
+            <span class="add-text">添加</span>
+        `;
+        container.appendChild(addDiv);
+    }
+}
+
+function removeBananaRefImage(index) {
+    bananaReferenceImages.splice(index, 1);
+    renderBananaRefImages();
+    updateBananaGenerationType();
+}
+
+window.removeBananaRefImage = removeBananaRefImage;
+
+function updateBananaGenerationType() {
+    const hasImages = bananaReferenceImages.length > 0;
+    let type = '纯文生图';
+
+    if (hasImages) {
+        if (bananaReferenceImages.length > 1) {
+            type = `多图融合 (${bananaReferenceImages.length}张)`;
+        } else {
+            type = '单图参考';
+        }
+    }
+
+    document.getElementById('banana-generation-type').textContent = type;
+}
+
+function updateBananaGenerateButton() {
+    const btn = document.getElementById('banana-generate-btn');
+    const prompt = document.getElementById('banana-prompt-input').value.trim();
+
+    let canGenerate = selectedBananaAccountId !== null && prompt.length > 0;
+
+    // 检查账户是否有Banana配置
+    if (canGenerate) {
+        const account = accounts.find(a => a.id === selectedBananaAccountId);
+        if (!account || !account.banana_base_url) {
+            canGenerate = false;
+        }
+    }
+
+    btn.disabled = !canGenerate;
+}
+
+async function handleBananaGenerate() {
+    const prompt = document.getElementById('banana-prompt-input').value.trim();
+
+    if (!prompt) {
+        showToast('请输入图片描述', 'error');
+        return;
+    }
+
+    if (!selectedBananaAccountId) {
+        showToast('请选择账户', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('banana-generate-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="btn-icon">⏳</span><span>生成中...</span>';
+
+    try {
+        const resolution = document.getElementById('banana-resolution').value;
+        const ratio = document.getElementById('banana-ratio').value;
+
+        const body = {
+            account_id: selectedBananaAccountId,
+            prompt: prompt,
+            aspect_ratio: ratio,
+            resolution: resolution,
+        };
+
+        // 添加参考图片
+        if (bananaReferenceImages.length > 0) {
+            body.images = bananaReferenceImages.map(img => img.data);
+        }
+
+        const resp = await fetch(`${API_BASE}/banana/images`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify(body)
+        });
+
+        if (resp.ok) {
+            const task = await resp.json();
+            showToast(`Banana图片任务已提交，正在生成中...`, 'success');
+
+            // 刷新存储状态
+            loadBananaStorage();
+
+            // 切换到队列页面
+            switchSection('queue');
+        } else {
+            const data = await resp.json();
+            showToast(data.detail || '生成失败', 'error');
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('网络错误', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="btn-icon">🍌</span><span>生成图片</span>';
+        updateBananaGenerateButton();
+    }
+}
+
+async function loadBananaStorage() {
+    try {
+        const resp = await fetch(`${API_BASE}/banana/storage`, {
+            headers: authHeaders()
+        });
+
+        if (resp.ok) {
+            const data = await resp.json();
+            document.getElementById('banana-storage-size').textContent = data.size_display;
+        }
+    } catch (err) {
+        console.error('加载Banana存储信息失败:', err);
+    }
+}
+
+async function loadBananaUsage(accountId) {
+    if (!accountId) {
+        document.getElementById('banana-usage-count').textContent = '-';
+        return;
+    }
+
+    try {
+        const resp = await fetch(`${API_BASE}/banana/usage?account_id=${accountId}`, {
+            headers: authHeaders()
+        });
+
+        if (resp.ok) {
+            const data = await resp.json();
+            document.getElementById('banana-usage-count').textContent = `${data.images_last_5h} 张`;
+        } else {
+            document.getElementById('banana-usage-count').textContent = '-';
+        }
+    } catch (err) {
+        console.error('加载Banana用量失败:', err);
+        document.getElementById('banana-usage-count').textContent = '-';
+    }
+}
+
+async function cleanupBananaStorage() {
+    if (!confirm('确定清理所有 Banana 图片？此操作不可恢复。')) {
+        return;
+    }
+
+    try {
+        const resp = await fetch(`${API_BASE}/banana/storage/cleanup`, {
+            method: 'POST',
+            headers: authHeaders()
+        });
+
+        if (resp.ok) {
+            const data = await resp.json();
+            showToast(data.message, 'success');
+            loadBananaStorage();
+        } else {
+            const data = await resp.json();
+            showToast(data.detail || '清理失败', 'error');
+        }
+    } catch (err) {
+        showToast('网络错误', 'error');
+    }
+}
+
+async function refreshBananaInfo() {
+    // 同时刷新存储空间和使用量
+    await loadBananaStorage();
+    if (selectedBananaAccountId) {
+        await loadBananaUsage(selectedBananaAccountId);
+    }
+    showToast('已刷新', 'info');
+}
+
+window.loadBananaStorage = loadBananaStorage;
+window.cleanupBananaStorage = cleanupBananaStorage;
+window.refreshBananaInfo = refreshBananaInfo;

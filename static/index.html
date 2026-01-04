@@ -64,6 +64,10 @@
                                 <span class="tab-icon">🖼️</span>
                                 <span>图片生成</span>
                             </button>
+                            <button class="mode-tab" data-mode="banana">
+                                <span class="tab-icon">🍌</span>
+                                <span>Banana生图</span>
+                            </button>
                         </div>
 
                         <!-- ============ 视频生成面板 ============ -->
@@ -402,6 +406,127 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- ============ Banana生图面板 ============ -->
+                        <div id="banana-panel" class="mode-panel">
+                            <div class="generate-grid">
+                                <!-- 左侧：输入区域 + 参数 -->
+                                <div class="left-panel">
+                                    <!-- 输入区 -->
+                                    <div class="input-card glass">
+                                        <h3>🍌 图片描述</h3>
+
+                                        <!-- 提示词 -->
+                                        <div class="prompt-section">
+                                            <label>提示词 <span class="required">(必填)</span></label>
+                                            <textarea id="banana-prompt-input" placeholder="描述你想生成的图片内容，支持多轮对话修改"
+                                                rows="4"></textarea>
+                                        </div>
+
+                                        <!-- 参考图片上传 -->
+                                        <div class="ref-images-section">
+                                            <label>参考图片 <span class="optional">(可选，最多14张)</span></label>
+                                            <div class="ref-images-container" id="banana-ref-images-container">
+                                                <div class="ref-image-add" id="banana-ref-image-add"
+                                                    onclick="document.getElementById('banana-ref-images-file').click()">
+                                                    <input type="file" id="banana-ref-images-file" accept="image/*"
+                                                        multiple hidden>
+                                                    <span class="add-icon">+</span>
+                                                    <span class="add-text">添加图片</span>
+                                                </div>
+                                            </div>
+                                            <div class="ref-images-hint">
+                                                支持拖拽或点击上传，图片将用于风格参考或图生图
+                                            </div>
+                                        </div>
+
+                                        <!-- 生成类型提示 -->
+                                        <div class="generation-type-hint">
+                                            <span class="type-label">模式:</span>
+                                            <span id="banana-generation-type" class="type-value">纯文生图</span>
+                                        </div>
+                                    </div>
+
+                                    <!-- 参数设置 -->
+                                    <div class="settings-card glass">
+                                        <h3>⚙️ 生成参数</h3>
+
+                                        <div class="params-grid params-grid-2">
+                                            <div class="form-group">
+                                                <label>分辨率</label>
+                                                <select id="banana-resolution">
+                                                    <option value="1K">1K (默认)</option>
+                                                    <option value="2K">2K</option>
+                                                    <option value="4K">4K</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group">
+                                                <label>比例</label>
+                                                <select id="banana-ratio">
+                                                    <option value="1:1" selected>1:1 方形</option>
+                                                    <option value="4:3">4:3 横屏</option>
+                                                    <option value="3:4">3:4 竖屏</option>
+                                                    <option value="16:9">16:9 横屏</option>
+                                                    <option value="9:16">9:16 竖屏</option>
+                                                    <option value="3:2">3:2 横屏</option>
+                                                    <option value="2:3">2:3 竖屏</option>
+                                                    <option value="4:5">4:5 竖屏</option>
+                                                    <option value="5:4">5:4 横屏</option>
+                                                    <option value="21:9">21:9 超宽</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div class="banana-info-hint">
+                                            <span class="hint-icon">💡</span>
+                                            <span>使用 Gemini API，支持多轮修改</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 右侧：账户 + 存储状态 -->
+                                <div class="right-panel">
+                                    <!-- 账户选择 -->
+                                    <div class="account-card glass">
+                                        <h3>🔑 选择账户</h3>
+                                        <div id="banana-account-list" class="account-list">
+                                            <div class="loading">加载账户列表...</div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 存储状态 -->
+                                    <div class="token-card glass">
+                                        <h3>💾 存储状态</h3>
+                                        <div class="storage-display">
+                                            <div class="storage-main">
+                                                <span class="storage-number" id="banana-storage-size">0 B</span>
+                                                <span class="storage-unit">已使用</span>
+                                            </div>
+                                            <div class="usage-display">
+                                                <span class="usage-label">近5小时生成:</span>
+                                                <span class="usage-value" id="banana-usage-count">-</span>
+                                            </div>
+                                        </div>
+                                        <div class="storage-actions">
+                                            <button id="banana-refresh-storage-btn" class="btn btn-ghost btn-sm"
+                                                onclick="refreshBananaInfo()">
+                                                刷新
+                                            </button>
+                                            <button id="banana-cleanup-btn" class="btn btn-danger btn-sm"
+                                                onclick="cleanupBananaStorage()">
+                                                清理存储
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- 生成按钮 -->
+                                    <button id="banana-generate-btn" class="btn btn-primary btn-generate" disabled>
+                                        <span class="btn-icon">🍌</span>
+                                        <span>生成图片</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </section>
 
@@ -415,6 +540,7 @@
                                     <option value="">全部类型</option>
                                     <option value="video">视频</option>
                                     <option value="image">图片</option>
+                                    <option value="banana_image">Banana图片</option>
                                 </select>
                                 <select id="queue-account-filter">
                                     <option value="">全部账户</option>
