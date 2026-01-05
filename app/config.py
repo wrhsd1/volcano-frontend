@@ -11,6 +11,12 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """应用配置"""
     
+    model_config = {
+        "extra": "ignore",  # 允许额外的环境变量（如 GUEST_PASSWORD1, GUEST_PASSWORD2 等）
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+    }
+    
     # 数据目录
     data_dir: str = "./data"
     
@@ -30,10 +36,6 @@ class Settings(BaseSettings):
     
     # 每日图片生成额度
     daily_image_limit: int = 20
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
     
     @property
     def database_url(self) -> str:
@@ -79,6 +81,43 @@ class Settings(BaseSettings):
     def ensure_temp_uploads_dir(self):
         """确保临时上传目录存在"""
         Path(self.temp_uploads_dir).mkdir(parents=True, exist_ok=True)
+
+
+    @property
+    def guest_passwords(self) -> dict:
+        """
+        解析 GUEST_PASSWORD1, GUEST_PASSWORD2... 环境变量
+        返回 {guest_id: password} 字典，例如 {"1": "pwd1", "2": "pwd2"}
+        同时检查 os.environ 和 .env 文件
+        """
+        result = {}
+        
+        # 从 os.environ 读取
+        for key, value in os.environ.items():
+            if key.startswith("GUEST_PASSWORD") and value:
+                suffix = key.replace("GUEST_PASSWORD", "")
+                if suffix:
+                    result[suffix] = value
+        
+        # 从 .env 文件读取（补充 os.environ 中没有的）
+        env_path = Path(".env")
+        if env_path.exists():
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            key, _, value = line.partition("=")
+                            key = key.strip()
+                            value = value.strip().strip('"').strip("'")
+                            if key.startswith("GUEST_PASSWORD") and value:
+                                suffix = key.replace("GUEST_PASSWORD", "")
+                                if suffix and suffix not in result:
+                                    result[suffix] = value
+            except Exception:
+                pass
+        
+        return result
 
 
 @lru_cache()

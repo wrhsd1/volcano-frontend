@@ -123,6 +123,9 @@ class Task(Base):
     # Banana 多轮对话历史 (JSON数组)
     conversation_history = Column(Text, nullable=True)
     
+    # 提交者标识: "admin" 或 "guest_1", "guest_2" 等
+    submitted_by = Column(String(50), default="admin")
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -147,6 +150,7 @@ class Task(Base):
             "token_usage": self.token_usage,
             "error_message": self.error_message,
             "conversation_history": self.conversation_history,
+            "submitted_by": self.submitted_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

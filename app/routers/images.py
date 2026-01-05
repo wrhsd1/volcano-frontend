@@ -497,6 +497,9 @@ async def create_image_task(
         if request.optimize_prompt:
             params_to_store["optimize_prompt"] = True
         
+        # 确定提交者标识
+        submitted_by = "admin" if user.get("role") == "admin" else f"guest_{user.get('guest_id', '')}"
+        
         # 立即创建任务记录 (状态为 running)
         task = Task(
             task_id=task_id,
@@ -506,6 +509,7 @@ async def create_image_task(
             generation_type=generation_type,
             params=json.dumps(params_to_store, ensure_ascii=False),
             image_count=request.max_images if request.sequential_image_generation == "auto" else 1,
+            submitted_by=submitted_by,
         )
         
         db.add(task)

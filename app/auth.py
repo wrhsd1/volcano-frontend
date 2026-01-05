@@ -28,10 +28,26 @@ def create_access_token(data: dict) -> str:
     return encoded_jwt
 
 
-def verify_password(plain_password: str) -> bool:
-    """验证密码"""
+def verify_password_and_role(plain_password: str) -> tuple:
+    """
+    验证密码并返回角色信息
+    返回: (is_valid, role, guest_id)
+    - 管理员: (True, "admin", "")
+    - 访客: (True, "guest", "1"/"2"/...)
+    - 无效: (False, "", "")
+    """
     settings = get_settings()
-    return plain_password == settings.access_password
+    
+    # 检查管理员密码
+    if plain_password == settings.access_password:
+        return (True, "admin", "")
+    
+    # 检查访客密码
+    for guest_id, pwd in settings.guest_passwords.items():
+        if plain_password == pwd:
+            return (True, "guest", guest_id)
+    
+    return (False, "", "")
 
 
 def decode_token(token: str) -> Optional[dict]:
@@ -65,4 +81,8 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    return {"authenticated": True}
+    return {
+        "authenticated": True,
+        "role": payload.get("role", "admin"),  # 兼容旧token，默认admin
+        "guest_id": payload.get("guest_id", "")
+    }

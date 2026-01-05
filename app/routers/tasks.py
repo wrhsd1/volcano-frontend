@@ -68,6 +68,7 @@ class TaskResponse(BaseModel):
     image_count: Optional[int]
     token_usage: Optional[int]
     error_message: Optional[str]
+    submitted_by: Optional[str]  # 提交者标识
     created_at: Optional[str]
     updated_at: Optional[str]
 
@@ -395,6 +396,9 @@ async def create_task(
             "last_frame_url": request.last_frame_url,
         }
         
+        # 确定提交者标识
+        submitted_by = "admin" if user.get("role") == "admin" else f"guest_{user.get('guest_id', '')}"
+        
         # 保存任务到数据库
         task = Task(
             task_id=task_id,
@@ -403,6 +407,7 @@ async def create_task(
             status="queued",
             generation_type=generation_type,
             params=json.dumps(params_to_store, ensure_ascii=False),
+            submitted_by=submitted_by,
         )
         
         db.add(task)
@@ -433,8 +438,13 @@ async def list_tasks(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """列出所有任务"""
+    """列出任务（访客只能看到自己的任务）"""
     query = select(Task).options(selectinload(Task.account)).order_by(desc(Task.created_at))
+    
+    # 访客只能看到自己提交的任务
+    if user.get("role") == "guest":
+        guest_tag = f"guest_{user.get('guest_id', '')}"
+        query = query.where(Task.submitted_by == guest_tag)
     
     if account_id is not None:
         query = query.where(Task.account_id == account_id)
@@ -505,7 +515,7 @@ async def delete_task(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """删除任务"""
+    """删除任务（访客只能删除自己的任务）"""
     result = await db.execute(
         select(Task).options(selectinload(Task.account)).where(Task.task_id == task_id)
     )
@@ -514,7 +524,12 @@ async def delete_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     
-    # 尝试从火山 API 删除（目前火山 API 可能不支持删除，仅删除本地记录）
+    # 访客只能删除自己的任务
+    if user.get("role") == "guest":
+        guest_tag = f"guest_{user.get('guest_id', '')}"
+        if task.submitted_by != guest_tag:
+            raise HTTPException(status_code=403, detail="无权删除此任务")
+    
     # 本地删除
     await db.delete(task)
     await db.commit()

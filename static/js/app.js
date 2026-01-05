@@ -61,6 +61,8 @@ const IMAGE_SIZE_MAP = {
 // ======================== 状态 ========================
 
 let token = localStorage.getItem('auth_token');
+let userRole = localStorage.getItem('user_role') || 'admin';  // 'admin' | 'guest'
+let guestId = localStorage.getItem('guest_id') || '';  // '' for admin, '1'/'2' for guests
 let accounts = [];
 let selectedAccountId = null;
 let selectedImageAccountId = null;  // 图片模式选中的账户
@@ -340,9 +342,21 @@ function showLoginView() {
 function showMainView() {
     document.getElementById('login-view').classList.remove('active');
     document.getElementById('main-view').classList.add('active');
+
+    // 根据角色更新UI
+    updateUIForRole();
+
     loadAccounts();
     loadTasks();
     startPolling();
+}
+
+function updateUIForRole() {
+    // 访客隐藏设置按钮
+    const settingsBtn = document.querySelector('.nav-btn[data-view="settings"]');
+    if (settingsBtn) {
+        settingsBtn.style.display = userRole === 'admin' ? '' : 'none';
+    }
 }
 
 function switchSection(sectionName) {
@@ -412,7 +426,11 @@ async function handleLogin(e) {
 
         if (resp.ok && data.ok) {
             token = data.token;
+            userRole = data.role || 'admin';
+            guestId = data.guest_id || '';
             localStorage.setItem('auth_token', token);
+            localStorage.setItem('user_role', userRole);
+            localStorage.setItem('guest_id', guestId);
             errorEl.textContent = '';
             showMainView();
         } else {
@@ -425,7 +443,11 @@ async function handleLogin(e) {
 
 function handleLogout() {
     token = null;
+    userRole = 'admin';
+    guestId = '';
     localStorage.removeItem('auth_token');
+    localStorage.removeItem('user_role');
+    localStorage.removeItem('guest_id');
     stopPolling();
     showLoginView();
 }
@@ -1588,6 +1610,24 @@ async function showTaskDetail(taskId) {
     document.getElementById('detail-account').textContent = task.account_name || '未知';
     document.getElementById('detail-type').textContent = typeMap[task.generation_type] || task.generation_type || '-';
     document.getElementById('detail-status').textContent = statusMap[task.status] || task.status;
+
+    // 显示提交者 (仅管理员可见)
+    const submitterRow = document.getElementById('detail-submitter-row');
+    if (userRole === 'admin' && submitterRow) {
+        submitterRow.style.display = 'flex';
+        const submitter = task.submitted_by || 'admin';
+        // 映射提交者标识到可读名称
+        let submitterLabel = submitter;
+        if (submitter === 'admin') {
+            submitterLabel = '🔑 管理员';
+        } else if (submitter.startsWith('guest_')) {
+            const gid = submitter.replace('guest_', '');
+            submitterLabel = `👤 访客 ${gid}`;
+        }
+        document.getElementById('detail-submitter').textContent = submitterLabel;
+    } else if (submitterRow) {
+        submitterRow.style.display = 'none';
+    }
 
     // 提取并显示提示词
     const promptRow = document.getElementById('detail-prompt-row');

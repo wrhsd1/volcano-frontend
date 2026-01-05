@@ -397,6 +397,9 @@ async def create_banana_image(
     # 生成本地任务ID
     task_id = f"banana-{uuid.uuid4().hex[:16]}"
     
+    # 确定提交者标识
+    submitted_by = "admin" if user.get("role") == "admin" else f"guest_{user.get('guest_id', '')}"
+    
     # 创建任务记录
     task = Task(
         task_id=task_id,
@@ -411,6 +414,7 @@ async def create_banana_image(
             "image_count": len(final_images)
         }, ensure_ascii=False),
         conversation_history=json.dumps(conversation_history, ensure_ascii=False),
+        submitted_by=submitted_by,
     )
     
     db.add(task)
@@ -531,6 +535,9 @@ async def continue_banana_image(
     # 创建新任务记录
     new_task_id = f"banana-{uuid.uuid4().hex[:16]}"
     
+    # 确定提交者标识 (继承原任务的提交者，或使用当前用户)
+    submitted_by = original_task.submitted_by or ("admin" if user.get("role") == "admin" else f"guest_{user.get('guest_id', '')}")
+    
     new_task = Task(
         task_id=new_task_id,
         account_id=account.id,
@@ -542,6 +549,7 @@ async def continue_banana_image(
             "parent_task_id": task_id
         }, ensure_ascii=False),
         conversation_history=json.dumps(conversation_history, ensure_ascii=False),
+        submitted_by=submitted_by,
     )
     
     db.add(new_task)

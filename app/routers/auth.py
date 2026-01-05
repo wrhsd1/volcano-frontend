@@ -5,7 +5,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..auth import verify_password, create_access_token
+from ..auth import verify_password_and_role, create_access_token
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
 
@@ -19,19 +19,30 @@ class LoginResponse(BaseModel):
     """登录响应"""
     ok: bool
     token: str
+    role: str      # "admin" | "guest"
+    guest_id: str  # "" for admin, "1"/"2" for guests
 
 
 @router.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest):
     """登录"""
-    if not verify_password(request.password):
+    is_valid, role, guest_id = verify_password_and_role(request.password)
+    
+    if not is_valid:
         raise HTTPException(status_code=401, detail="密码错误")
     
-    token = create_access_token({"sub": "user"})
-    return LoginResponse(ok=True, token=token)
+    # 在 token 中包含角色信息
+    token = create_access_token({
+        "sub": "user",
+        "role": role,
+        "guest_id": guest_id
+    })
+    
+    return LoginResponse(ok=True, token=token, role=role, guest_id=guest_id)
 
 
 @router.post("/verify")
 async def verify_token():
     """验证 token (仅测试用)"""
     return {"ok": True}
+
