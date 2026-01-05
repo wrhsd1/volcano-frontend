@@ -68,12 +68,89 @@ let selectedBananaAccountId = null;  // Banana模式选中的账户
 let tasks = [];
 let selectedTaskId = null;
 let selectedTaskIds = new Set();  // 批量选择的任务ID
-let firstFrameData = null;  // base64 or url
+// 图片数据结构: { type: 'uploading'|'uploaded'|'url', fileId?, localPreview?, progress?, value? }
+let firstFrameData = null;
 let lastFrameData = null;
-let referenceImages = [];  // 图片生成参考图列表
+let referenceImages = [];  // 图片生成参考图列表: { name, localPreview, type, fileId?, progress? }
 let bananaReferenceImages = [];  // Banana参考图列表
 let currentMode = 'video';  // 'video' | 'image' | 'banana'
 let pollInterval = null;
+
+// ======================== 文件上传 ========================
+
+/**
+ * 上传文件到服务器
+ * @param {File} file - 要上传的文件
+ * @param {Function} onProgress - 进度回调 (0-100)
+ * @returns {Promise<{ok: boolean, file_id: string, filename: string, size: number}>}
+ */
+function uploadFile(file, onProgress) {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        const formData = new FormData();
+        formData.append('file', file);
+
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+                const percent = Math.round(e.loaded / e.total * 100);
+                if (onProgress) onProgress(percent);
+            }
+        };
+
+        xhr.onload = () => {
+            if (xhr.status === 200) {
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    resolve(data);
+                } catch (e) {
+                    reject(new Error('解析响应失败'));
+                }
+            } else {
+                let errorMsg = '上传失败';
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    errorMsg = data.detail || errorMsg;
+                } catch (e) { }
+                reject(new Error(errorMsg));
+            }
+        };
+
+        xhr.onerror = () => {
+            reject(new Error('网络错误'));
+        };
+
+        xhr.open('POST', `${API_BASE}/upload`);
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        xhr.send(formData);
+    });
+}
+
+/**
+ * 删除已上传的文件
+ * @param {string} fileId - 文件ID
+ */
+async function deleteUploadedFile(fileId) {
+    if (!fileId) return;
+    try {
+        await fetch(`${API_BASE}/upload/${fileId}`, {
+            method: 'DELETE',
+            headers: authHeaders()
+        });
+    } catch (e) {
+        console.warn('删除上传文件失败:', e);
+    }
+}
+
+/**
+ * 检查是否有图片正在上传
+ */
+function hasUploadingImages() {
+    if (firstFrameData?.type === 'uploading') return true;
+    if (lastFrameData?.type === 'uploading') return true;
+    if (referenceImages.some(img => img.type === 'uploading')) return true;
+    if (bananaReferenceImages.some(img => img.type === 'uploading')) return true;
+    return false;
+}
 
 // ======================== 初始化 ========================
 
@@ -307,9 +384,13 @@ function switchMode(mode) {
     renderImageAccountList();
     renderBananaAccountList();
 
-    // Banana模式特殊初始化
+    // 模式特殊初始化
     if (mode === 'banana') {
         loadBananaStorage();
+    } else if (mode === 'image') {
+        loadVolcanoStorage();
+    } else if (mode === 'video') {
+        loadVideoStorage();
     }
 }
 
@@ -358,29 +439,107 @@ function authHeaders() {
 
 // ======================== 文件上传 (视频) ========================
 
-function handleFileSelect(file, prefix) {
+async function handleFileSelect(file, prefix) {
     if (!file.type.startsWith('image/')) {
         showToast('请选择图片文件', 'error');
         return;
     }
 
+    // 先读取本地预览
     const reader = new FileReader();
-    reader.onload = (e) => {
-        const base64 = e.target.result;
+    reader.onload = async (e) => {
+        const localPreview = e.target.result;
 
+        // 设置为上传中状态
         if (prefix === 'first-frame') {
-            firstFrameData = { type: 'base64', value: base64 };
+            firstFrameData = { type: 'uploading', localPreview, progress: 0 };
             document.getElementById('first-frame-url').value = '';
         } else {
-            lastFrameData = { type: 'base64', value: base64 };
+            lastFrameData = { type: 'uploading', localPreview, progress: 0 };
             document.getElementById('last-frame-url').value = '';
         }
 
-        showPreview(prefix, base64);
+        showPreviewWithProgress(prefix, localPreview, 0);
         updateGenerationType();
-        updateEstimate();
+        updateGenerateButton();
+
+        // 开始上传
+        try {
+            const result = await uploadFile(file, (progress) => {
+                // 更新进度
+                if (prefix === 'first-frame' && firstFrameData?.type === 'uploading') {
+                    firstFrameData.progress = progress;
+                } else if (prefix === 'last-frame' && lastFrameData?.type === 'uploading') {
+                    lastFrameData.progress = progress;
+                }
+                updateProgressBar(prefix, progress);
+            });
+
+            // 上传成功
+            if (prefix === 'first-frame') {
+                firstFrameData = { type: 'uploaded', fileId: result.file_id, localPreview };
+            } else {
+                lastFrameData = { type: 'uploaded', fileId: result.file_id, localPreview };
+            }
+
+            hideProgressBar(prefix);
+            updateGenerateButton();
+            showToast(`${prefix === 'first-frame' ? '首帧' : '尾帧'}上传完成`, 'success');
+
+        } catch (err) {
+            showToast(`上传失败: ${err.message}`, 'error');
+            // 清除状态
+            if (prefix === 'first-frame') {
+                firstFrameData = null;
+            } else {
+                lastFrameData = null;
+            }
+            hidePreview(prefix);
+            updateGenerationType();
+            updateGenerateButton();
+        }
     };
     reader.readAsDataURL(file);
+}
+
+function showPreviewWithProgress(prefix, src, progress) {
+    const placeholder = document.getElementById(`${prefix}-placeholder`);
+    const previewContainer = document.getElementById(`${prefix}-preview-container`);
+    const img = document.getElementById(`${prefix}-img`);
+
+    placeholder.style.display = 'none';
+    previewContainer.style.display = 'block';
+    previewContainer.classList.add('uploading');
+    img.src = src;
+
+    // 添加进度条
+    let progressBar = previewContainer.querySelector('.upload-progress');
+    if (!progressBar) {
+        progressBar = document.createElement('div');
+        progressBar.className = 'upload-progress';
+        progressBar.innerHTML = '<div class="upload-progress-bar" style="width: 0%"></div>';
+        previewContainer.appendChild(progressBar);
+    }
+    progressBar.querySelector('.upload-progress-bar').style.width = `${progress}%`;
+}
+
+function updateProgressBar(prefix, progress) {
+    const previewContainer = document.getElementById(`${prefix}-preview-container`);
+    const progressBar = previewContainer?.querySelector('.upload-progress-bar');
+    if (progressBar) {
+        progressBar.style.width = `${progress}%`;
+    }
+}
+
+function hideProgressBar(prefix) {
+    const previewContainer = document.getElementById(`${prefix}-preview-container`);
+    if (previewContainer) {
+        previewContainer.classList.remove('uploading');
+        const progressBar = previewContainer.querySelector('.upload-progress');
+        if (progressBar) {
+            progressBar.remove();
+        }
+    }
 }
 
 function showPreview(prefix, src) {
@@ -390,6 +549,7 @@ function showPreview(prefix, src) {
 
     placeholder.style.display = 'none';
     previewContainer.style.display = 'block';
+    previewContainer.classList.remove('uploading');
     img.src = src;
 }
 
@@ -404,20 +564,31 @@ function hidePreview(prefix) {
 
     placeholder.style.display = 'flex';
     previewContainer.style.display = 'none';
+    previewContainer.classList.remove('uploading');
 }
 
-function clearImage(prefix) {
+async function clearImage(prefix) {
+    let fileIdToDelete = null;
+
     if (prefix === 'first-frame') {
+        fileIdToDelete = firstFrameData?.fileId;
         firstFrameData = null;
         document.getElementById('first-frame-file').value = '';
         document.getElementById('first-frame-url').value = '';
     } else {
+        fileIdToDelete = lastFrameData?.fileId;
         lastFrameData = null;
         document.getElementById('last-frame-file').value = '';
         document.getElementById('last-frame-url').value = '';
     }
 
+    // 删除服务端文件
+    if (fileIdToDelete) {
+        deleteUploadedFile(fileIdToDelete);
+    }
+
     hidePreview(prefix);
+    hideProgressBar(prefix);
     updateGenerationType();
     updateEstimate();
 }
@@ -455,15 +626,60 @@ function handleRefImagesSelect(e) {
             return;
         }
 
+        const index = referenceImages.length;
+
+        // 先读取本地预览
         const reader = new FileReader();
-        reader.onload = (ev) => {
+        reader.onload = async (ev) => {
+            const localPreview = ev.target.result;
+
+            // 添加为上传中状态
             referenceImages.push({
                 name: file.name,
-                data: ev.target.result
+                localPreview: localPreview,
+                type: 'uploading',
+                progress: 0
             });
+
             renderRefImages();
             updateImageGenerationType();
-            updateImageEstimate();
+            updateImageGenerateButton();
+
+            // 开始上传
+            const currentIndex = referenceImages.findIndex(
+                img => img.localPreview === localPreview && img.type === 'uploading'
+            );
+
+            try {
+                const result = await uploadFile(file, (progress) => {
+                    if (currentIndex >= 0 && referenceImages[currentIndex]) {
+                        referenceImages[currentIndex].progress = progress;
+                        renderRefImages();
+                    }
+                });
+
+                // 上传成功
+                if (currentIndex >= 0 && referenceImages[currentIndex]) {
+                    referenceImages[currentIndex].type = 'uploaded';
+                    referenceImages[currentIndex].fileId = result.file_id;
+                    delete referenceImages[currentIndex].progress;
+                }
+
+                renderRefImages();
+                updateImageGenerateButton();
+
+            } catch (err) {
+                showToast(`上传失败: ${err.message}`, 'error');
+                // 移除失败的图片
+                const failIndex = referenceImages.findIndex(
+                    img => img.localPreview === localPreview && img.type === 'uploading'
+                );
+                if (failIndex >= 0) {
+                    referenceImages.splice(failIndex, 1);
+                }
+                renderRefImages();
+                updateImageGenerateButton();
+            }
         };
         reader.readAsDataURL(file);
     });
@@ -474,7 +690,6 @@ function handleRefImagesSelect(e) {
 
 function renderRefImages() {
     const container = document.getElementById('ref-images-container');
-    const addBtn = document.getElementById('ref-image-add');
 
     // 清空现有预览
     container.innerHTML = '';
@@ -482,10 +697,18 @@ function renderRefImages() {
     // 添加已有图片
     referenceImages.forEach((img, index) => {
         const item = document.createElement('div');
-        item.className = 'ref-image-item';
+        item.className = 'ref-image-item' + (img.type === 'uploading' ? ' uploading' : '');
+
+        let progressHtml = '';
+        if (img.type === 'uploading') {
+            progressHtml = `<div class="upload-progress"><div class="upload-progress-bar" style="width: ${img.progress || 0}%"></div></div>`;
+        }
+
+        const src = img.localPreview || img.data;
         item.innerHTML = `
-            <img src="${img.data}" alt="${img.name}">
+            <img src="${src}" alt="${img.name}">
             <button type="button" class="ref-image-remove" onclick="removeRefImage(${index})">✕</button>
+            ${progressHtml}
         `;
         container.appendChild(item);
     });
@@ -504,7 +727,11 @@ function renderRefImages() {
     }
 }
 
-function removeRefImage(index) {
+async function removeRefImage(index) {
+    const img = referenceImages[index];
+    if (img?.fileId) {
+        deleteUploadedFile(img.fileId);
+    }
     referenceImages.splice(index, 1);
     renderRefImages();
     updateImageGenerationType();
@@ -546,6 +773,15 @@ function updateGenerateButton() {
 
     let canGenerate = selectedAccountId !== null;
 
+    // 检查是否有图片正在上传
+    const isUploading = hasUploadingImages();
+    if (isUploading) {
+        canGenerate = false;
+        btn.classList.add('uploading-blocked');
+    } else {
+        btn.classList.remove('uploading-blocked');
+    }
+
     // 检查账户是否有视频model_id
     if (canGenerate) {
         const account = accounts.find(a => a.id === selectedAccountId);
@@ -584,6 +820,15 @@ function updateImageGenerateButton() {
     const prompt = document.getElementById('image-prompt-input').value.trim();
 
     let canGenerate = selectedImageAccountId !== null && prompt.length > 0;
+
+    // 检查是否有图片正在上传
+    const isUploading = referenceImages.some(img => img.type === 'uploading');
+    if (isUploading) {
+        canGenerate = false;
+        btn.classList.add('uploading-blocked');
+    } else {
+        btn.classList.remove('uploading-blocked');
+    }
 
     // 检查账户是否有图片model_id
     if (canGenerate) {
@@ -1088,19 +1333,19 @@ async function handleGenerate() {
             camera_fixed: document.getElementById('camera-fixed').checked
         };
 
-        // 添加图片
+        // 添加图片 (使用 file_id 或 URL)
         if (firstFrameData) {
-            if (firstFrameData.type === 'base64') {
-                body.first_frame_base64 = firstFrameData.value;
-            } else {
+            if (firstFrameData.type === 'uploaded' && firstFrameData.fileId) {
+                body.first_frame_file_id = firstFrameData.fileId;
+            } else if (firstFrameData.type === 'url') {
                 body.first_frame_url = firstFrameData.value;
             }
         }
 
         if (lastFrameData) {
-            if (lastFrameData.type === 'base64') {
-                body.last_frame_base64 = lastFrameData.value;
-            } else {
+            if (lastFrameData.type === 'uploaded' && lastFrameData.fileId) {
+                body.last_frame_file_id = lastFrameData.fileId;
+            } else if (lastFrameData.type === 'url') {
                 body.last_frame_url = lastFrameData.value;
             }
         }
@@ -1174,9 +1419,14 @@ async function handleImageGenerate() {
             body.count = parseInt(document.getElementById('image-count').value);
         }
 
-        // 添加参考图片
+        // 添加参考图片 (使用 file_id)
         if (referenceImages.length > 0) {
-            body.images = referenceImages.map(img => img.data);
+            const uploadedFileIds = referenceImages
+                .filter(img => img.type === 'uploaded' && img.fileId)
+                .map(img => img.fileId);
+            if (uploadedFileIds.length > 0) {
+                body.file_ids = uploadedFileIds;
+            }
         }
 
         const resp = await fetch(`${API_BASE}/images`, {
@@ -1385,18 +1635,55 @@ async function showTaskDetail(taskId) {
     if (task.params) {
         try {
             const params = JSON.parse(task.params);
-            if (task.task_type === 'video' && params.content) {
-                // 视频任务：从 content 数组中提取图片
-                params.content.forEach(item => {
-                    if (item.type === 'image_url' && item.image_url && item.image_url.url) {
+            if (task.task_type === 'video') {
+                // 视频任务：优先从 frame_paths 提取本地保存的帧
+                if (params.frame_paths) {
+                    if (params.frame_paths.first_frame) {
+                        const filename = params.frame_paths.first_frame.split(/[/\\]/).pop();
                         refImages.push({
-                            url: item.image_url.url,
-                            label: item.role === 'first_frame' ? '首帧' : (item.role === 'last_frame' ? '尾帧' : '参考')
+                            url: `${API_BASE}/tasks/video/frame/${task.task_id}/${filename}`,
+                            label: '首帧'
                         });
                     }
+                    if (params.frame_paths.last_frame) {
+                        const filename = params.frame_paths.last_frame.split(/[/\\]/).pop();
+                        refImages.push({
+                            url: `${API_BASE}/tasks/video/frame/${task.task_id}/${filename}`,
+                            label: '尾帧'
+                        });
+                    }
+                }
+                // URL 方式的帧
+                if (params.first_frame_url) {
+                    refImages.push({ url: params.first_frame_url, label: '首帧' });
+                }
+                if (params.last_frame_url) {
+                    refImages.push({ url: params.last_frame_url, label: '尾帧' });
+                }
+                // 旧格式：从 content 数组中提取
+                if (params.content) {
+                    params.content.forEach(item => {
+                        if (item.type === 'image_url' && item.image_url && item.image_url.url) {
+                            // 跳过 base64，因为已经在 frame_paths 中处理了
+                            if (!item.image_url.url.startsWith('data:')) {
+                                refImages.push({
+                                    url: item.image_url.url,
+                                    label: item.role === 'first_frame' ? '首帧' : (item.role === 'last_frame' ? '尾帧' : '参考')
+                                });
+                            }
+                        }
+                    });
+                }
+            } else if (params.ref_image_paths && params.ref_image_paths.length > 0) {
+                // 优化的图片任务：使用本地参考图
+                params.ref_image_paths.forEach((path, idx) => {
+                    // 提取文件名
+                    const filename = path.split(/[/\\]/).pop();
+                    const url = `${API_BASE}/images/file/${task.task_id}/${filename}`;
+                    refImages.push({ url, label: `参考${idx + 1}` });
                 });
             } else if (params.image) {
-                // 图片任务：从 image 字段提取
+                // 旧版图片任务：从 image 字段提取
                 if (Array.isArray(params.image)) {
                     params.image.forEach((url, idx) => {
                         refImages.push({ url, label: `参考${idx + 1}` });
@@ -1839,14 +2126,58 @@ function handleBananaRefImagesSelect(e) {
             return;
         }
 
+        // 先读取本地预览
         const reader = new FileReader();
-        reader.onload = (ev) => {
+        reader.onload = async (ev) => {
+            const localPreview = ev.target.result;
+
+            // 添加为上传中状态
             bananaReferenceImages.push({
                 name: file.name,
-                data: ev.target.result
+                localPreview: localPreview,
+                type: 'uploading',
+                progress: 0
             });
+
             renderBananaRefImages();
             updateBananaGenerationType();
+            updateBananaGenerateButton();
+
+            // 开始上传
+            const currentIndex = bananaReferenceImages.findIndex(
+                img => img.localPreview === localPreview && img.type === 'uploading'
+            );
+
+            try {
+                const result = await uploadFile(file, (progress) => {
+                    if (currentIndex >= 0 && bananaReferenceImages[currentIndex]) {
+                        bananaReferenceImages[currentIndex].progress = progress;
+                        renderBananaRefImages();
+                    }
+                });
+
+                // 上传成功
+                if (currentIndex >= 0 && bananaReferenceImages[currentIndex]) {
+                    bananaReferenceImages[currentIndex].type = 'uploaded';
+                    bananaReferenceImages[currentIndex].fileId = result.file_id;
+                    delete bananaReferenceImages[currentIndex].progress;
+                }
+
+                renderBananaRefImages();
+                updateBananaGenerateButton();
+
+            } catch (err) {
+                showToast(`上传失败: ${err.message}`, 'error');
+                // 移除失败的图片
+                const failIndex = bananaReferenceImages.findIndex(
+                    img => img.localPreview === localPreview && img.type === 'uploading'
+                );
+                if (failIndex >= 0) {
+                    bananaReferenceImages.splice(failIndex, 1);
+                }
+                renderBananaRefImages();
+                updateBananaGenerateButton();
+            }
         };
         reader.readAsDataURL(file);
     });
@@ -1864,10 +2195,18 @@ function renderBananaRefImages() {
     // 添加已有图片
     bananaReferenceImages.forEach((img, index) => {
         const item = document.createElement('div');
-        item.className = 'ref-image-item';
+        item.className = 'ref-image-item' + (img.type === 'uploading' ? ' uploading' : '');
+
+        let progressHtml = '';
+        if (img.type === 'uploading') {
+            progressHtml = `<div class="upload-progress"><div class="upload-progress-bar" style="width: ${img.progress || 0}%"></div></div>`;
+        }
+
+        const src = img.localPreview || img.data;
         item.innerHTML = `
-            <img src="${img.data}" alt="${img.name}">
+            <img src="${src}" alt="${img.name}">
             <button type="button" class="ref-image-remove" onclick="removeBananaRefImage(${index})">✕</button>
+            ${progressHtml}
         `;
         container.appendChild(item);
     });
@@ -1886,10 +2225,15 @@ function renderBananaRefImages() {
     }
 }
 
-function removeBananaRefImage(index) {
+async function removeBananaRefImage(index) {
+    const img = bananaReferenceImages[index];
+    if (img?.fileId) {
+        deleteUploadedFile(img.fileId);
+    }
     bananaReferenceImages.splice(index, 1);
     renderBananaRefImages();
     updateBananaGenerationType();
+    updateBananaGenerateButton();
 }
 
 window.removeBananaRefImage = removeBananaRefImage;
@@ -1914,6 +2258,15 @@ function updateBananaGenerateButton() {
     const prompt = document.getElementById('banana-prompt-input').value.trim();
 
     let canGenerate = selectedBananaAccountId !== null && prompt.length > 0;
+
+    // 检查是否有图片正在上传
+    const isUploading = bananaReferenceImages.some(img => img.type === 'uploading');
+    if (isUploading) {
+        canGenerate = false;
+        btn.classList.add('uploading-blocked');
+    } else {
+        btn.classList.remove('uploading-blocked');
+    }
 
     // 检查账户是否有Banana配置
     if (canGenerate) {
@@ -1954,9 +2307,14 @@ async function handleBananaGenerate() {
             resolution: resolution,
         };
 
-        // 添加参考图片
+        // 添加参考图片 (使用 file_id)
         if (bananaReferenceImages.length > 0) {
-            body.images = bananaReferenceImages.map(img => img.data);
+            const uploadedFileIds = bananaReferenceImages
+                .filter(img => img.type === 'uploaded' && img.fileId)
+                .map(img => img.fileId);
+            if (uploadedFileIds.length > 0) {
+                body.file_ids = uploadedFileIds;
+            }
         }
 
         const resp = await fetch(`${API_BASE}/banana/images`, {
@@ -2062,3 +2420,93 @@ async function refreshBananaInfo() {
 window.loadBananaStorage = loadBananaStorage;
 window.cleanupBananaStorage = cleanupBananaStorage;
 window.refreshBananaInfo = refreshBananaInfo;
+
+// ======================== 火山图片存储管理 ========================
+
+async function loadVolcanoStorage() {
+    try {
+        const resp = await fetch(`${API_BASE}/images/storage/info`, {
+            headers: authHeaders()
+        });
+
+        if (resp.ok) {
+            const data = await resp.json();
+            document.getElementById('volcano-storage-size').textContent = data.size_display;
+            document.getElementById('volcano-storage-files').textContent = `${data.file_count} 个文件`;
+        }
+    } catch (err) {
+        console.error('加载火山存储信息失败:', err);
+    }
+}
+
+async function cleanupVolcanoStorage() {
+    if (!confirm('确定清理所有火山图片参考图？此操作不可恢复。')) {
+        return;
+    }
+
+    try {
+        const resp = await fetch(`${API_BASE}/images/storage/cleanup`, {
+            method: 'POST',
+            headers: authHeaders()
+        });
+
+        if (resp.ok) {
+            const data = await resp.json();
+            showToast(data.message, 'success');
+            loadVolcanoStorage();
+        } else {
+            const data = await resp.json();
+            showToast(data.detail || '清理失败', 'error');
+        }
+    } catch (err) {
+        showToast('网络错误', 'error');
+    }
+}
+
+window.loadVolcanoStorage = loadVolcanoStorage;
+window.cleanupVolcanoStorage = cleanupVolcanoStorage;
+
+// ======================== 视频帧存储管理 ========================
+
+async function loadVideoStorage() {
+    try {
+        const resp = await fetch(`${API_BASE}/tasks/video/storage/info`, {
+            headers: authHeaders()
+        });
+
+        if (resp.ok) {
+            const data = await resp.json();
+            document.getElementById('video-storage-size').textContent = data.size_display;
+            document.getElementById('video-storage-files').textContent = `${data.file_count} 个文件`;
+        }
+    } catch (err) {
+        console.error('加载视频帧存储信息失败:', err);
+    }
+}
+
+async function cleanupVideoStorage() {
+    if (!confirm('确定清理所有视频帧图片？此操作不可恢复。')) {
+        return;
+    }
+
+    try {
+        const resp = await fetch(`${API_BASE}/tasks/video/storage/cleanup`, {
+            method: 'POST',
+            headers: authHeaders()
+        });
+
+        if (resp.ok) {
+            const data = await resp.json();
+            showToast(data.message, 'success');
+            loadVideoStorage();
+        } else {
+            const data = await resp.json();
+            showToast(data.detail || '清理失败', 'error');
+        }
+    } catch (err) {
+        showToast('网络错误', 'error');
+    }
+}
+
+window.loadVideoStorage = loadVideoStorage;
+window.cleanupVideoStorage = cleanupVideoStorage;

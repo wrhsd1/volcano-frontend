@@ -26,6 +26,7 @@ import logging
 
 from ..auth import get_current_user
 from ..database import get_db, Task, Account, Base
+from .upload import get_base64_from_file_id, delete_file_by_id
 from ..config import get_settings
 
 router = APIRouter(prefix="/api/banana", tags=["Banana生图"])
@@ -46,6 +47,7 @@ class BananaImageCreateRequest(BaseModel):
     
     # 参考图片 (可选，最多14张，base64格式)
     images: Optional[List[str]] = None
+    file_ids: Optional[List[str]] = None  # 服务端预上传的文件ID数组
     
     # 尺寸设置
     aspect_ratio: str = "1:1"  # "1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"
@@ -322,10 +324,23 @@ async def create_banana_image(
     if request.images and len(request.images) > 14:
         raise HTTPException(status_code=400, detail="参考图片最多14张")
     
+    # 处理 file_ids - 转换为 base64
+    final_images = list(request.images) if request.images else []
+    uploaded_file_ids = []  # 记录使用的临时文件
+    
+    if request.file_ids:
+        for file_id in request.file_ids:
+            b64 = get_base64_from_file_id(file_id)
+            if b64:
+                final_images.append(b64)
+                uploaded_file_ids.append(file_id)
+            else:
+                raise HTTPException(status_code=400, detail=f"参考图片文件 {file_id} 不存在或已过期")
+    
     # 确定生成类型
-    has_images = bool(request.images and len(request.images) > 0)
+    has_images = len(final_images) > 0
     if has_images:
-        if len(request.images) > 1:
+        if len(final_images) > 1:
             generation_type = "multi_image"
         else:
             generation_type = "image_to_image"
@@ -336,8 +351,8 @@ async def create_banana_image(
     parts = [{"text": request.prompt}]
     
     # 添加参考图片
-    if request.images:
-        for img_data in request.images:
+    if final_images:
+        for img_data in final_images:
             # 处理 base64 数据
             if img_data.startswith("data:"):
                 # 移除 data:image/xxx;base64, 前缀
@@ -373,10 +388,10 @@ async def create_banana_image(
     }]
     
     # 如果有参考图片，也记录到历史
-    if request.images:
+    if final_images:
         conversation_history[0]["parts"].append({
             "type": "images",
-            "count": len(request.images)
+            "count": len(final_images)
         })
     
     # 生成本地任务ID
@@ -393,7 +408,7 @@ async def create_banana_image(
             "prompt": request.prompt,
             "aspect_ratio": request.aspect_ratio,
             "resolution": request.resolution,
-            "image_count": len(request.images) if request.images else 0
+            "image_count": len(final_images)
         }, ensure_ascii=False),
         conversation_history=json.dumps(conversation_history, ensure_ascii=False),
     )
@@ -411,6 +426,13 @@ async def create_banana_image(
         account.banana_base_url, account.banana_api_key, model_name,
         account.id, conversation_history
     )
+    
+    # 清理使用完毕的临时上传文件
+    for file_id in uploaded_file_ids:
+        try:
+            delete_file_by_id(file_id)
+        except:
+            pass  # 忽略清理错误
     
     return BananaTaskResponse(
         id=task.id,

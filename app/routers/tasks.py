@@ -3,9 +3,15 @@
 """
 
 import json
+import os
+import base64
+import uuid
+import shutil
+from pathlib import Path
 from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
@@ -15,6 +21,7 @@ import httpx
 from ..auth import get_current_user
 from ..database import get_db, Task, Account
 from .accounts import get_daily_usage, update_daily_usage
+from .upload import get_base64_from_file_id, delete_file_by_id
 from ..config import get_settings
 
 router = APIRouter(prefix="/api/tasks", tags=["任务管理"])
@@ -33,6 +40,8 @@ class TaskCreateRequest(BaseModel):
     last_frame_base64: Optional[str] = None
     first_frame_url: Optional[str] = None
     last_frame_url: Optional[str] = None
+    first_frame_file_id: Optional[str] = None  # 服务端预上传的文件ID
+    last_frame_file_id: Optional[str] = None   # 服务端预上传的文件ID
     ratio: str = "16:9"
     resolution: str = "720p"
     duration: int = 5
@@ -126,6 +135,56 @@ def calculate_price(tokens: int, has_audio: bool) -> float:
     return round(tokens / 1000 * price_per_k, 4)
 
 
+def save_frame_image(base64_data: str, task_dir: str, filename: str) -> str:
+    """保存帧图片到本地，返回文件路径"""
+    Path(task_dir).mkdir(parents=True, exist_ok=True)
+    
+    # 处理 data:image/xxx;base64, 前缀
+    if base64_data.startswith("data:"):
+        base64_start = base64_data.find(",") + 1
+        img_base64 = base64_data[base64_start:]
+    else:
+        img_base64 = base64_data
+    
+    image_data = base64.b64decode(img_base64)
+    filepath = os.path.join(task_dir, filename)
+    
+    with open(filepath, 'wb') as f:
+        f.write(image_data)
+    
+    return filepath
+
+
+def get_video_storage_size(path: str) -> tuple:
+    """获取目录大小和文件数量"""
+    total_size = 0
+    file_count = 0
+    
+    if not os.path.exists(path):
+        return 0, 0
+    
+    for dirpath, dirnames, filenames in os.walk(path):
+        for filename in filenames:
+            filepath = os.path.join(dirpath, filename)
+            if os.path.isfile(filepath):
+                total_size += os.path.getsize(filepath)
+                file_count += 1
+    
+    return total_size, file_count
+
+
+def format_size(size_bytes: int) -> str:
+    """格式化文件大小"""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
+
+
 # ======================== API 端点 ========================
 
 @router.post("/estimate", response_model=TokenEstimate)
@@ -182,8 +241,29 @@ async def create_task(
         )
     
     # 确定生成类型和构建 content
-    has_first_frame = bool(request.first_frame_base64 or request.first_frame_url)
-    has_last_frame = bool(request.last_frame_base64 or request.last_frame_url)
+    # 如果传入了 file_id，需要转换为 base64
+    first_frame_base64 = request.first_frame_base64
+    last_frame_base64 = request.last_frame_base64
+    uploaded_file_ids = []  # 记录使用的临时文件，任务成功后清理
+    
+    if request.first_frame_file_id:
+        b64 = get_base64_from_file_id(request.first_frame_file_id)
+        if b64:
+            first_frame_base64 = b64
+            uploaded_file_ids.append(request.first_frame_file_id)
+        else:
+            raise HTTPException(status_code=400, detail="首帧图片文件不存在或已过期")
+    
+    if request.last_frame_file_id:
+        b64 = get_base64_from_file_id(request.last_frame_file_id)
+        if b64:
+            last_frame_base64 = b64
+            uploaded_file_ids.append(request.last_frame_file_id)
+        else:
+            raise HTTPException(status_code=400, detail="尾帧图片文件不存在或已过期")
+    
+    has_first_frame = bool(first_frame_base64 or request.first_frame_url)
+    has_last_frame = bool(last_frame_base64 or request.last_frame_url)
     
     if has_last_frame and not has_first_frame:
         raise HTTPException(status_code=400, detail="缺失首帧图片：仅提供尾帧图片时，必须同时提供首帧图片")
@@ -208,6 +288,23 @@ async def create_task(
     created_tasks = []
     
     for i in range(request.video_count):
+        # 生成本地任务ID用于保存帧图片
+        local_task_id = f"vid-{uuid.uuid4().hex[:16]}"
+        
+        # 保存首帧/尾帧到本地（如果是base64）
+        saved_frame_paths = {}
+        if first_frame_base64:
+            settings.ensure_volcano_video_frames_dir()
+            task_dir = os.path.join(settings.volcano_video_frames_dir, local_task_id)
+            first_path = save_frame_image(first_frame_base64, task_dir, "first_frame.png")
+            saved_frame_paths["first_frame"] = first_path
+        
+        if last_frame_base64:
+            settings.ensure_volcano_video_frames_dir()
+            task_dir = os.path.join(settings.volcano_video_frames_dir, local_task_id)
+            last_path = save_frame_image(last_frame_base64, task_dir, "last_frame.png")
+            saved_frame_paths["last_frame"] = last_path
+        
         # 构建 content 数组
         content = []
         
@@ -220,7 +317,7 @@ async def create_task(
         
         # 添加首帧图片
         if has_first_frame:
-            first_url = request.first_frame_url or request.first_frame_base64
+            first_url = request.first_frame_url or first_frame_base64
             img_obj = {
                 "type": "image_url",
                 "image_url": {"url": first_url}
@@ -231,7 +328,7 @@ async def create_task(
         
         # 添加尾帧图片
         if has_last_frame:
-            last_url = request.last_frame_url or request.last_frame_base64
+            last_url = request.last_frame_url or last_frame_base64
             content.append({
                 "type": "image_url",
                 "image_url": {"url": last_url},
@@ -275,6 +372,29 @@ async def create_task(
         except httpx.RequestError as e:
             raise HTTPException(status_code=500, detail=f"请求火山 API 失败: {str(e)}")
         
+        # 如果有保存的帧图片，重命名目录到正式 task_id
+        if saved_frame_paths:
+            old_dir = os.path.join(settings.volcano_video_frames_dir, local_task_id)
+            new_dir = os.path.join(settings.volcano_video_frames_dir, task_id)
+            if os.path.exists(old_dir):
+                os.rename(old_dir, new_dir)
+                # 更新路径
+                for key in saved_frame_paths:
+                    saved_frame_paths[key] = saved_frame_paths[key].replace(local_task_id, task_id)
+        
+        # 为数据库存储创建不含 base64 的 params
+        params_to_store = {
+            "model": account.video_model_id,
+            "generate_audio": request.generate_audio,
+            "prompt": request.prompt,
+            "ratio": request.ratio,
+            "resolution": request.resolution,
+            "duration": request.duration,
+            "frame_paths": saved_frame_paths,  # 存储本地路径
+            "first_frame_url": request.first_frame_url,  # URL 保留
+            "last_frame_url": request.last_frame_url,
+        }
+        
         # 保存任务到数据库
         task = Task(
             task_id=task_id,
@@ -282,7 +402,7 @@ async def create_task(
             task_type="video",
             status="queued",
             generation_type=generation_type,
-            params=json.dumps(api_request, ensure_ascii=False),
+            params=json.dumps(params_to_store, ensure_ascii=False),
         )
         
         db.add(task)
@@ -293,6 +413,13 @@ async def create_task(
         await update_daily_usage(db, account.id, tokens_per_video)
         
         created_tasks.append(TaskResponse(**task.to_dict()))
+    
+    # 清理使用完毕的临时上传文件
+    for file_id in uploaded_file_ids:
+        try:
+            delete_file_by_id(file_id)
+        except:
+            pass  # 忽略清理错误
     
     return created_tasks
 
@@ -434,3 +561,80 @@ async def sync_task_status(task: Task, db: AsyncSession):
                 await db.commit()
     except Exception as e:
         print(f"同步任务状态失败: {e}")
+
+
+@router.get("/video/frame/{task_id}/{filename}")
+async def get_video_frame_file(
+    task_id: str,
+    filename: str
+):
+    """获取视频帧图片文件 (无需认证，供前端img标签使用)"""
+    settings = get_settings()
+    
+    # 安全检查
+    if ".." in task_id or ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="非法路径")
+    
+    filepath = os.path.join(settings.volcano_video_frames_dir, task_id, filename)
+    
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="图片不存在")
+    
+    return FileResponse(filepath, media_type="image/png")
+
+
+@router.get("/video/storage/info")
+async def get_video_storage(
+    user: dict = Depends(get_current_user)
+):
+    """获取视频帧存储空间占用"""
+    settings = get_settings()
+    
+    size_bytes, file_count = get_video_storage_size(settings.volcano_video_frames_dir)
+    
+    return {
+        "size_bytes": size_bytes,
+        "size_display": format_size(size_bytes),
+        "file_count": file_count
+    }
+
+
+@router.post("/video/storage/cleanup")
+async def cleanup_video_storage(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """清理所有视频帧存储"""
+    settings = get_settings()
+    
+    # 获取清理前的大小
+    size_before, count_before = get_video_storage_size(settings.volcano_video_frames_dir)
+    
+    # 删除整个目录并重建
+    if os.path.exists(settings.volcano_video_frames_dir):
+        shutil.rmtree(settings.volcano_video_frames_dir)
+        Path(settings.volcano_video_frames_dir).mkdir(parents=True, exist_ok=True)
+    
+    # 更新数据库中的任务，清空 frame_paths
+    result = await db.execute(
+        select(Task).where(Task.task_type == "video")
+    )
+    tasks = result.scalars().all()
+    
+    for task in tasks:
+        if task.params:
+            try:
+                params = json.loads(task.params)
+                if "frame_paths" in params:
+                    params["frame_paths"] = {}
+                    task.params = json.dumps(params, ensure_ascii=False)
+            except:
+                pass
+    
+    await db.commit()
+    
+    return {
+        "ok": True,
+        "message": f"已清理 {count_before} 个文件，释放 {format_size(size_before)} 空间"
+    }
+

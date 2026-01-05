@@ -45,6 +45,11 @@ class Settings(BaseSettings):
         """Banana 图片存储目录"""
         return f"{self.data_dir}/banana_images"
     
+    @property
+    def volcano_ref_images_dir(self) -> str:
+        """火山图片参考图存储目录"""
+        return f"{self.data_dir}/volcano_ref_images"
+    
     def ensure_data_dir(self):
         """确保数据目录存在"""
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)
@@ -52,6 +57,28 @@ class Settings(BaseSettings):
     def ensure_banana_dir(self):
         """确保 Banana 图片目录存在"""
         Path(self.banana_images_dir).mkdir(parents=True, exist_ok=True)
+    
+    def ensure_volcano_ref_dir(self):
+        """确保火山参考图片目录存在"""
+        Path(self.volcano_ref_images_dir).mkdir(parents=True, exist_ok=True)
+    
+    @property
+    def volcano_video_frames_dir(self) -> str:
+        """火山视频首尾帧图片存储目录"""
+        return f"{self.data_dir}/volcano_video_frames"
+    
+    def ensure_volcano_video_frames_dir(self):
+        """确保火山视频帧目录存在"""
+        Path(self.volcano_video_frames_dir).mkdir(parents=True, exist_ok=True)
+    
+    @property
+    def temp_uploads_dir(self) -> str:
+        """临时上传文件目录"""
+        return f"{self.data_dir}/temp_uploads"
+    
+    def ensure_temp_uploads_dir(self):
+        """确保临时上传目录存在"""
+        Path(self.temp_uploads_dir).mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache()

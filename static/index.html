@@ -238,6 +238,25 @@
                                         </div>
                                     </div>
 
+                                    <!-- 帧图片存储 -->
+                                    <div class="storage-card glass">
+                                        <h3>💾 帧图片存储</h3>
+                                        <div class="storage-display">
+                                            <div class="storage-main">
+                                                <span class="storage-number" id="video-storage-size">0 B</span>
+                                                <span class="storage-files" id="video-storage-files">0 个文件</span>
+                                            </div>
+                                        </div>
+                                        <div class="storage-actions">
+                                            <button class="btn btn-ghost btn-sm" onclick="loadVideoStorage()">
+                                                刷新
+                                            </button>
+                                            <button class="btn btn-danger btn-sm" onclick="cleanupVideoStorage()">
+                                                清理存储
+                                            </button>
+                                        </div>
+                                    </div>
+
                                     <!-- 生成按钮 -->
                                     <button id="generate-btn" class="btn btn-primary btn-generate" disabled>
                                         <span class="btn-icon">🚀</span>
@@ -267,11 +286,10 @@
                                         <!-- 参考图片上传 -->
                                         <div class="ref-images-section">
                                             <label>参考图片 <span class="optional">(可选，最多14张)</span></label>
+                                            <input type="file" id="ref-images-file" accept="image/*" multiple hidden>
                                             <div class="ref-images-container" id="ref-images-container">
                                                 <div class="ref-image-add" id="ref-image-add"
                                                     onclick="document.getElementById('ref-images-file').click()">
-                                                    <input type="file" id="ref-images-file" accept="image/*" multiple
-                                                        hidden>
                                                     <span class="add-icon">+</span>
                                                     <span class="add-text">添加图片</span>
                                                 </div>
@@ -398,6 +416,25 @@
                                         </div>
                                     </div>
 
+                                    <!-- 参考图存储 -->
+                                    <div class="storage-card glass">
+                                        <h3>💾 参考图存储</h3>
+                                        <div class="storage-display">
+                                            <div class="storage-main">
+                                                <span class="storage-number" id="volcano-storage-size">0 B</span>
+                                                <span class="storage-files" id="volcano-storage-files">0 个文件</span>
+                                            </div>
+                                        </div>
+                                        <div class="storage-actions">
+                                            <button class="btn btn-ghost btn-sm" onclick="loadVolcanoStorage()">
+                                                刷新
+                                            </button>
+                                            <button class="btn btn-danger btn-sm" onclick="cleanupVolcanoStorage()">
+                                                清理存储
+                                            </button>
+                                        </div>
+                                    </div>
+
                                     <!-- 生成按钮 -->
                                     <button id="image-generate-btn" class="btn btn-primary btn-generate" disabled>
                                         <span class="btn-icon">🎨</span>
@@ -426,11 +463,11 @@
                                         <!-- 参考图片上传 -->
                                         <div class="ref-images-section">
                                             <label>参考图片 <span class="optional">(可选，最多14张)</span></label>
+                                            <input type="file" id="banana-ref-images-file" accept="image/*" multiple
+                                                hidden>
                                             <div class="ref-images-container" id="banana-ref-images-container">
                                                 <div class="ref-image-add" id="banana-ref-image-add"
                                                     onclick="document.getElementById('banana-ref-images-file').click()">
-                                                    <input type="file" id="banana-ref-images-file" accept="image/*"
-                                                        multiple hidden>
                                                     <span class="add-icon">+</span>
                                                     <span class="add-text">添加图片</span>
                                                 </div>

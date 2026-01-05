@@ -8,9 +8,14 @@ import json
 import uuid
 import asyncio
 import threading
+import os
+import shutil
+import base64
+from pathlib import Path
 from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, desc
@@ -22,6 +27,7 @@ import logging
 from ..auth import get_current_user
 from ..database import get_db, Task, Account, Base
 from .accounts import get_daily_image_usage, update_daily_image_usage
+from .upload import get_base64_from_file_id, delete_file_by_id
 from ..config import get_settings
 
 router = APIRouter(prefix="/api/images", tags=["图片生成"])
@@ -32,8 +38,86 @@ logger = logging.getLogger(__name__)
 # 火山图片生成 API URL
 VOLCANO_IMAGE_API = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
 
+# doubao-seedream-4.5 推荐的尺寸
+SIZE_MAP_2K = {
+    "1:1": "2048x2048",
+    "4:3": "2304x1728",
+    "3:4": "1728x2304",
+    "16:9": "2560x1440",
+    "9:16": "1440x2560",
+    "3:2": "2496x1664",
+    "2:3": "1664x2496",
+    "21:9": "3024x1296",
+}
+
+SIZE_MAP_4K = {
+    "1:1": "4096x4096",
+    "4:3": "4608x3456",
+    "3:4": "3456x4608",
+    "16:9": "5120x2880",
+    "9:16": "2880x5120",
+    "3:2": "4992x3328",
+    "2:3": "3328x4992",
+    "21:9": "6048x2592",
+}
+
+VOLCANO_SIZE_MAP = SIZE_MAP_2K | SIZE_MAP_4K
+
 # 图片价格 (元/张)
 IMAGE_PRICE = 0.25
+
+
+# ======================== 辅助函数 ========================
+
+def get_storage_size(path: str) -> tuple[int, int]:
+    """获取目录大小和文件数量"""
+    total_size = 0
+    file_count = 0
+    
+    if not os.path.exists(path):
+        return 0, 0
+    
+    for dirpath, dirnames, filenames in os.walk(path):
+        for filename in filenames:
+            filepath = os.path.join(dirpath, filename)
+            if os.path.isfile(filepath):
+                total_size += os.path.getsize(filepath)
+                file_count += 1
+    
+    return total_size, file_count
+
+
+def format_size(size_bytes: int) -> str:
+    """格式化文件大小"""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
+
+
+def save_ref_image(base64_data: str, task_dir: str, index: int) -> str:
+    """保存参考图片到本地，返回文件路径"""
+    Path(task_dir).mkdir(parents=True, exist_ok=True)
+    
+    # 处理 data:image/xxx;base64, 前缀
+    if base64_data.startswith("data:"):
+        base64_start = base64_data.find(",") + 1
+        img_base64 = base64_data[base64_start:]
+    else:
+        img_base64 = base64_data
+    
+    image_data = base64.b64decode(img_base64)
+    filename = f"ref_{index}.png"
+    filepath = os.path.join(task_dir, filename)
+    
+    with open(filepath, 'wb') as f:
+        f.write(image_data)
+    
+    return filepath
 
 
 # ======================== 请求/响应模型 ========================
@@ -45,6 +129,7 @@ class ImageCreateRequest(BaseModel):
     
     # 参考图片 (可选，最多14张)
     images: Optional[List[str]] = None  # URL 或 base64 数组
+    file_ids: Optional[List[str]] = None  # 服务端预上传的文件ID数组
     
     # 尺寸设置
     size: str = "2K"  # "2K" / "4K" / "2048x2048" 等
@@ -302,10 +387,23 @@ async def create_image_task(
             detail=f"额度不足，需要 {estimated_count} 张，剩余 {remaining} 张"
         )
     
+    # 处理 file_ids - 转换为 base64
+    final_images = list(request.images) if request.images else []
+    uploaded_file_ids = []  # 记录使用的临时文件
+    
+    if request.file_ids:
+        for file_id in request.file_ids:
+            b64 = get_base64_from_file_id(file_id)
+            if b64:
+                final_images.append(b64)
+                uploaded_file_ids.append(file_id)
+            else:
+                raise HTTPException(status_code=400, detail=f"参考图片文件 {file_id} 不存在或已过期")
+    
     # 确定生成类型
-    has_images = bool(request.images and len(request.images) > 0)
+    has_images = len(final_images) > 0
     if has_images:
-        if len(request.images) > 1:
+        if len(final_images) > 1:
             generation_type = "multi_image"  # 多图融合
         else:
             generation_type = "image_to_image"  # 单图参考
@@ -356,10 +454,10 @@ async def create_image_task(
         
         # 添加参考图片
         if has_images:
-            if len(request.images) == 1:
-                api_request["image"] = request.images[0]
+            if len(final_images) == 1:
+                api_request["image"] = final_images[0]
             else:
-                api_request["image"] = request.images
+                api_request["image"] = final_images
         
         # 组图设置
         if request.sequential_image_generation == "auto":
@@ -373,6 +471,32 @@ async def create_image_task(
         # 生成本地任务ID
         task_id = f"img-{uuid.uuid4().hex[:16]}"
         
+        # 保存参考图片到本地 (如果有)
+        saved_ref_paths = []
+        if has_images:
+            settings.ensure_volcano_ref_dir()
+            task_dir = os.path.join(settings.volcano_ref_images_dir, task_id)
+            for idx, img_data in enumerate(final_images):
+                try:
+                    filepath = save_ref_image(img_data, task_dir, idx)
+                    saved_ref_paths.append(filepath)
+                except Exception as e:
+                    logger.warning(f"保存参考图片失败: {e}")
+        
+        # 为数据库存储创建不含 base64 的 params
+        params_to_store = {
+            "model": account.image_model_id,
+            "prompt": request.prompt,
+            "size": request.size,
+            "watermark": request.watermark,
+            "response_format": request.response_format,
+            "sequential_image_generation": request.sequential_image_generation,
+            "ref_image_count": len(request.images) if request.images else 0,
+            "ref_image_paths": saved_ref_paths,  # 存储本地路径而非 base64
+        }
+        if request.optimize_prompt:
+            params_to_store["optimize_prompt"] = True
+        
         # 立即创建任务记录 (状态为 running)
         task = Task(
             task_id=task_id,
@@ -380,7 +504,7 @@ async def create_image_task(
             task_type="image",
             status="running",  # 任务正在处理中
             generation_type=generation_type,
-            params=json.dumps(api_request, ensure_ascii=False),
+            params=json.dumps(params_to_store, ensure_ascii=False),
             image_count=request.max_images if request.sequential_image_generation == "auto" else 1,
         )
         
@@ -408,6 +532,13 @@ async def create_image_task(
             created_at=task.created_at.isoformat() if task.created_at else None,
             updated_at=task.updated_at.isoformat() if task.updated_at else None,
         ))
+    
+    # 清理使用完毕的临时上传文件
+    for file_id in uploaded_file_ids:
+        try:
+            delete_file_by_id(file_id)
+        except:
+            pass  # 忽略清理错误
     
     return created_tasks
 
@@ -491,13 +622,33 @@ async def get_image_task(
     )
 
 
-@router.delete("/{task_id}")
+@router.get("/file/{task_id}/{filename}")
+async def get_volcano_ref_image_file(
+    task_id: str,
+    filename: str
+):
+    """获取火山参考图片文件 (无需认证)"""
+    settings = get_settings()
+    
+    # 安全检查
+    if ".." in task_id or ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="非法路径")
+    
+    filepath = os.path.join(settings.volcano_ref_images_dir, task_id, filename)
+    
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="图片不存在")
+    
+    return FileResponse(filepath, media_type="image/png")
+
 async def delete_image_task(
     task_id: str,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """删除图片任务"""
+    settings = get_settings()
+    
     result = await db.execute(
         select(Task).where(Task.task_id == task_id)
     )
@@ -506,7 +657,72 @@ async def delete_image_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     
+    # 删除本地参考图片目录
+    task_dir = os.path.join(settings.volcano_ref_images_dir, task_id)
+    if os.path.exists(task_dir):
+        shutil.rmtree(task_dir)
+        logger.info(f"已删除参考图片目录: {task_dir}")
+    
     await db.delete(task)
     await db.commit()
     
     return {"ok": True, "message": "任务已删除"}
+
+
+@router.get("/storage/info")
+async def get_volcano_storage(
+    user: dict = Depends(get_current_user)
+):
+    """获取火山图片参考图存储空间占用"""
+    settings = get_settings()
+    
+    size_bytes, file_count = get_storage_size(settings.volcano_ref_images_dir)
+    
+    return {
+        "size_bytes": size_bytes,
+        "size_display": format_size(size_bytes),
+        "file_count": file_count
+    }
+
+
+@router.post("/storage/cleanup")
+async def cleanup_volcano_storage(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """清理所有火山图片参考图存储"""
+    settings = get_settings()
+    
+    # 获取清理前的大小
+    size_before, count_before = get_storage_size(settings.volcano_ref_images_dir)
+    
+    # 删除整个目录并重建
+    if os.path.exists(settings.volcano_ref_images_dir):
+        shutil.rmtree(settings.volcano_ref_images_dir)
+        Path(settings.volcano_ref_images_dir).mkdir(parents=True, exist_ok=True)
+    
+    # 更新数据库中的任务，清空 ref_image_paths
+    result = await db.execute(
+        select(Task).where(Task.task_type == "image")
+    )
+    tasks = result.scalars().all()
+    
+    for task in tasks:
+        if task.params:
+            try:
+                params = json.loads(task.params)
+                if "ref_image_paths" in params:
+                    params["ref_image_paths"] = []
+                    task.params = json.dumps(params, ensure_ascii=False)
+            except:
+                pass
+    
+    await db.commit()
+    
+    logger.info(f"已清理火山参考图存储: {count_before} 个文件, {format_size(size_before)}")
+    
+    return {
+        "ok": True,
+        "message": f"已清理 {count_before} 个文件，释放 {format_size(size_before)} 空间"
+    }
+

@@ -1685,3 +1685,102 @@ input[type="range"]::-webkit-slider-thumb:hover {
     text-align: center;
     padding: 2px;
 }
+
+/* ======================== 上传进度条 ======================== */
+
+.upload-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 8px;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 10;
+}
+
+.upload-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--primary-light));
+    transition: width 0.2s ease;
+    border-radius: 0 4px 4px 0;
+    box-shadow: 0 0 8px var(--primary);
+}
+
+/* 上传中状态样式 */
+.image-preview-container.uploading {
+    opacity: 0.8;
+}
+
+.image-preview-container.uploading::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: repeating-linear-gradient(45deg,
+            transparent,
+            transparent 10px,
+            rgba(255, 107, 53, 0.1) 10px,
+            rgba(255, 107, 53, 0.1) 20px);
+    animation: uploading-stripe 0.5s linear infinite;
+}
+
+@keyframes uploading-stripe {
+    0% {
+        background-position: 0 0;
+    }
+
+    100% {
+        background-position: 28px 0;
+    }
+}
+
+/* 参考图片项上传进度 */
+.ref-image-item {
+    position: relative;
+}
+
+.ref-image-item.uploading {
+    opacity: 0.85;
+}
+
+.ref-image-item .upload-progress {
+    top: 50%;
+    left: 8px;
+    right: 8px;
+    bottom: auto;
+    height: 10px;
+    transform: translateY(-50%);
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.6);
+}
+
+/* 上传状态指示器 */
+.upload-status {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 20px;
+    z-index: 15;
+    background: rgba(0, 0, 0, 0.6);
+    border-radius: 50%;
+    padding: 8px;
+}
+
+/* 上传中禁用生成按钮的提示样式 */
+.btn-generate.uploading-blocked {
+    position: relative;
+}
+
+.btn-generate.uploading-blocked::after {
+    content: '正在上传图片...';
+    position: absolute;
+    bottom: -24px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    color: var(--warning);
+    white-space: nowrap;
+}
