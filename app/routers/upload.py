@@ -49,6 +49,7 @@ class CheckHashResponse(BaseModel):
     exists: bool
     file_id: Optional[str] = None
     filename: Optional[str] = None
+    existing_path: Optional[str] = None  # 已存在文件的完整路径（用于持久化存储的复用）
 
 
 class CheckFilesRequest(BaseModel):
@@ -104,8 +105,87 @@ def calculate_file_hash(file_path: str) -> str:
     return sha256.hexdigest()
 
 
+# ======================== 全局 Hash 索引管理 ========================
+
+def get_hash_index_path() -> str:
+    """获取 hash 索引文件路径"""
+    settings = get_settings()
+    return os.path.join(settings.data_dir, "hash_index.json")
+
+
+def load_hash_index() -> dict:
+    """加载 hash 索引 {hash: filepath}"""
+    import json
+    index_path = get_hash_index_path()
+    if os.path.exists(index_path):
+        try:
+            with open(index_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_hash_index(index: dict):
+    """保存 hash 索引"""
+    import json
+    settings = get_settings()
+    settings.ensure_data_dir()
+    index_path = get_hash_index_path()
+    with open(index_path, 'w', encoding='utf-8') as f:
+        json.dump(index, f, ensure_ascii=False, indent=2)
+
+
+def add_to_hash_index(file_path: str, file_hash: str = None):
+    """添加文件到 hash 索引（如果不提供 hash 则计算）"""
+    if not os.path.exists(file_path):
+        return
+    
+    if not file_hash:
+        file_hash = calculate_file_hash(file_path)
+    
+    index = load_hash_index()
+    index[file_hash] = file_path
+    save_hash_index(index)
+
+
+def remove_from_hash_index(file_path: str):
+    """从 hash 索引中移除指定路径的条目"""
+    index = load_hash_index()
+    # 查找并移除所有指向此路径的条目
+    hashes_to_remove = [h for h, p in index.items() if p == file_path]
+    if hashes_to_remove:
+        for h in hashes_to_remove:
+            del index[h]
+        save_hash_index(index)
+
+
+def remove_dir_from_hash_index(dir_path: str):
+    """从 hash 索引中移除指定目录下所有文件的条目"""
+    index = load_hash_index()
+    # 查找并移除所有此目录下的条目
+    normalized_dir = os.path.normpath(dir_path)
+    hashes_to_remove = [h for h, p in index.items() if os.path.normpath(p).startswith(normalized_dir)]
+    if hashes_to_remove:
+        for h in hashes_to_remove:
+            del index[h]
+        save_hash_index(index)
+
+
 def find_file_by_hash(target_hash: str) -> Optional[str]:
-    """通过 hash 查找已存在的文件，返回 file_id"""
+    """通过 hash 查找已存在的文件，返回文件路径。优先查索引，回退到临时目录扫描"""
+    # 1. 先查全局索引
+    index = load_hash_index()
+    if target_hash in index:
+        filepath = index[target_hash]
+        if os.path.exists(filepath):
+            return filepath
+        else:
+            # 文件已删除，清理索引
+            del index[target_hash]
+            save_hash_index(index)
+    
+    # 2. 回退：扫描临时上传目录
     settings = get_settings()
     upload_dir = settings.temp_uploads_dir
     
@@ -119,15 +199,13 @@ def find_file_by_hash(target_hash: str) -> Optional[str]:
         file_id = filename
         file_path = os.path.join(upload_dir, file_id)
         
-        # 检查文件是否存在
         if not os.path.isfile(file_path):
             continue
         
-        # 读取 meta 获取 hash
         _, _, _, stored_hash = read_file_meta(file_id)
         
         if stored_hash and stored_hash == target_hash:
-            return file_id
+            return file_path
     
     return None
 
@@ -260,18 +338,31 @@ async def check_file_hash(
     """
     检查文件是否已存在 (通过 hash)
     用于秒传功能，避免重复上传相同文件
+    支持从临时上传目录和持久化存储目录中查找
     """
-    existing_file_id = find_file_by_hash(request.hash)
+    existing_filepath = find_file_by_hash(request.hash)
     
-    if existing_file_id:
-        # 验证文件确实存在
-        file_path = get_file_path(existing_file_id)
-        if os.path.exists(file_path):
-            filename, _, _, _ = read_file_meta(existing_file_id)
+    if existing_filepath and os.path.exists(existing_filepath):
+        filename = os.path.basename(existing_filepath)
+        
+        # 检查是否是临时上传目录中的文件 (有 file_id)
+        settings = get_settings()
+        temp_dir = settings.temp_uploads_dir
+        if existing_filepath.startswith(os.path.normpath(temp_dir)):
+            file_id = os.path.basename(existing_filepath)
             return CheckHashResponse(
                 exists=True,
-                file_id=existing_file_id,
-                filename=filename
+                file_id=file_id,
+                filename=filename,
+                existing_path=existing_filepath
+            )
+        else:
+            # 持久化存储中的文件，无 file_id，但有 existing_path
+            return CheckHashResponse(
+                exists=True,
+                file_id=None,
+                filename=filename,
+                existing_path=existing_filepath
             )
     
     return CheckHashResponse(exists=False)

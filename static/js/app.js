@@ -112,13 +112,14 @@ async function uploadFile(file, onProgress) {
 
         if (checkResp.ok) {
             const checkData = await checkResp.json();
-            if (checkData.exists && checkData.file_id) {
-                // 秒传成功
-                console.log(`[秒传] 文件已存在: ${checkData.file_id}`);
+            if (checkData.exists && (checkData.file_id || checkData.existing_path)) {
+                // 秒传成功 - 文件来自临时上传目录 (有 file_id) 或持久化存储 (有 existing_path)
+                console.log(`[秒传] 文件已存在: ${checkData.file_id || checkData.existing_path}`);
                 if (onProgress) onProgress(100);
                 return {
                     ok: true,
-                    file_id: checkData.file_id,
+                    file_id: checkData.file_id,  // 可能为 null (持久化存储的文件)
+                    existing_path: checkData.existing_path,  // 持久化存储的完整路径
                     filename: checkData.filename || file.name,
                     size: file.size
                 };
@@ -540,11 +541,19 @@ async function handleFileSelect(file, prefix) {
                 updateProgressBar(prefix, progress);
             });
 
-            // 上传成功
+            // 上传成功 (可能是实际上传，也可能是秒传)
             if (prefix === 'first-frame') {
-                firstFrameData = { type: 'uploaded', fileId: result.file_id, localPreview };
+                if (result.file_id) {
+                    firstFrameData = { type: 'uploaded', fileId: result.file_id, localPreview };
+                } else if (result.existing_path) {
+                    firstFrameData = { type: 'url', existingPath: result.existing_path, value: localPreview, localPreview };
+                }
             } else {
-                lastFrameData = { type: 'uploaded', fileId: result.file_id, localPreview };
+                if (result.file_id) {
+                    lastFrameData = { type: 'uploaded', fileId: result.file_id, localPreview };
+                } else if (result.existing_path) {
+                    lastFrameData = { type: 'url', existingPath: result.existing_path, value: localPreview, localPreview };
+                }
             }
 
             hideProgressBar(prefix);
@@ -723,10 +732,17 @@ function handleRefImagesSelect(e) {
                     }
                 });
 
-                // 上传成功
+                // 上传成功 (可能是实际上传，也可能是秒传)
                 if (currentIndex >= 0 && referenceImages[currentIndex]) {
-                    referenceImages[currentIndex].type = 'uploaded';
-                    referenceImages[currentIndex].fileId = result.file_id;
+                    if (result.file_id) {
+                        // 临时上传目录的文件
+                        referenceImages[currentIndex].type = 'uploaded';
+                        referenceImages[currentIndex].fileId = result.file_id;
+                    } else if (result.existing_path) {
+                        // 持久化存储的文件 (秒传)
+                        referenceImages[currentIndex].type = 'url';
+                        referenceImages[currentIndex].existingPath = result.existing_path;
+                    }
                     delete referenceImages[currentIndex].progress;
                 }
 
@@ -2495,10 +2511,17 @@ function handleBananaRefImagesSelect(e) {
                     }
                 });
 
-                // 上传成功
+                // 上传成功 (可能是实际上传，也可能是秒传)
                 if (currentIndex >= 0 && bananaReferenceImages[currentIndex]) {
-                    bananaReferenceImages[currentIndex].type = 'uploaded';
-                    bananaReferenceImages[currentIndex].fileId = result.file_id;
+                    if (result.file_id) {
+                        // 临时上传目录的文件
+                        bananaReferenceImages[currentIndex].type = 'uploaded';
+                        bananaReferenceImages[currentIndex].fileId = result.file_id;
+                    } else if (result.existing_path) {
+                        // 持久化存储的文件 (秒传)
+                        bananaReferenceImages[currentIndex].type = 'url';
+                        bananaReferenceImages[currentIndex].existingPath = result.existing_path;
+                    }
                     delete bananaReferenceImages[currentIndex].progress;
                 }
 

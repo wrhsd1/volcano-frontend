@@ -139,7 +139,9 @@ def calculate_price(tokens: int, has_audio: bool) -> float:
 
 
 def save_frame_image(base64_data: str, task_dir: str, filename: str) -> str:
-    """保存帧图片到本地，返回文件路径"""
+    """保存帧图片到本地，返回文件路径（同时更新 hash 索引）"""
+    from .upload import add_to_hash_index
+    
     Path(task_dir).mkdir(parents=True, exist_ok=True)
     
     # 处理 data:image/xxx;base64, 前缀
@@ -154,6 +156,9 @@ def save_frame_image(base64_data: str, task_dir: str, filename: str) -> str:
     
     with open(filepath, 'wb') as f:
         f.write(image_data)
+    
+    # 添加到全局 hash 索引以支持秒传
+    add_to_hash_index(filepath)
     
     return filepath
 
