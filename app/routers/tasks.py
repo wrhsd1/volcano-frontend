@@ -42,6 +42,8 @@ class TaskCreateRequest(BaseModel):
     last_frame_url: Optional[str] = None
     first_frame_file_id: Optional[str] = None  # 服务端预上传的文件ID
     last_frame_file_id: Optional[str] = None   # 服务端预上传的文件ID
+    existing_first_frame_path: Optional[str] = None  # 重试时使用已保存的首帧路径
+    existing_last_frame_path: Optional[str] = None   # 重试时使用已保存的尾帧路径
     ratio: str = "16:9"
     resolution: str = "720p"
     duration: int = 5
@@ -262,6 +264,31 @@ async def create_task(
             uploaded_file_ids.append(request.last_frame_file_id)
         else:
             raise HTTPException(status_code=400, detail="尾帧图片文件不存在或已过期")
+    
+    # 处理 existing_*_frame_path - 从已保存的帧图片读取 (用于重试功能)
+    if request.existing_first_frame_path and not first_frame_base64:
+        if os.path.exists(request.existing_first_frame_path):
+            try:
+                with open(request.existing_first_frame_path, 'rb') as f:
+                    img_data = f.read()
+                b64 = base64.b64encode(img_data).decode('utf-8')
+                first_frame_base64 = f"data:image/png;base64,{b64}"
+            except Exception as e:
+                logger.warning(f"读取已保存首帧失败: {request.existing_first_frame_path}, 错误: {e}")
+        else:
+            logger.warning(f"已保存的首帧不存在: {request.existing_first_frame_path}")
+    
+    if request.existing_last_frame_path and not last_frame_base64:
+        if os.path.exists(request.existing_last_frame_path):
+            try:
+                with open(request.existing_last_frame_path, 'rb') as f:
+                    img_data = f.read()
+                b64 = base64.b64encode(img_data).decode('utf-8')
+                last_frame_base64 = f"data:image/png;base64,{b64}"
+            except Exception as e:
+                logger.warning(f"读取已保存尾帧失败: {request.existing_last_frame_path}, 错误: {e}")
+        else:
+            logger.warning(f"已保存的尾帧不存在: {request.existing_last_frame_path}")
     
     has_first_frame = bool(first_frame_base64 or request.first_frame_url)
     has_last_frame = bool(last_frame_base64 or request.last_frame_url)

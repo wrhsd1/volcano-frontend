@@ -48,6 +48,7 @@ class BananaImageCreateRequest(BaseModel):
     # 参考图片 (可选，最多14张，base64格式)
     images: Optional[List[str]] = None
     file_ids: Optional[List[str]] = None  # 服务端预上传的文件ID数组
+    existing_ref_paths: Optional[List[str]] = None  # 重试时使用已保存的参考图路径
     
     # 尺寸设置
     aspect_ratio: str = "1:1"  # "1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"
@@ -357,6 +358,20 @@ async def create_banana_image(
                 uploaded_file_ids.append(file_id)
             else:
                 raise HTTPException(status_code=400, detail=f"参考图片文件 {file_id} 不存在或已过期")
+    
+    # 处理 existing_ref_paths - 从已保存的参考图读取 (用于重试功能)
+    if request.existing_ref_paths:
+        for path in request.existing_ref_paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, 'rb') as f:
+                        img_data = f.read()
+                    b64 = base64.b64encode(img_data).decode('utf-8')
+                    final_images.append(f"data:image/png;base64,{b64}")
+                except Exception as e:
+                    logger.warning(f"读取已保存参考图失败: {path}, 错误: {e}")
+            else:
+                logger.warning(f"已保存的参考图不存在: {path}")
     
     # 确定生成类型
     has_images = len(final_images) > 0

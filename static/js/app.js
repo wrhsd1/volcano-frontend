@@ -1398,11 +1398,14 @@ async function handleGenerate() {
             camera_fixed: document.getElementById('camera-fixed').checked
         };
 
-        // 添加图片 (使用 file_id 或 URL)
+        // 添加图片 (使用 file_id、URL 或已保存的路径)
         if (firstFrameData) {
             if (firstFrameData.type === 'uploaded' && firstFrameData.fileId) {
                 body.first_frame_file_id = firstFrameData.fileId;
-            } else if (firstFrameData.type === 'url') {
+            } else if (firstFrameData.type === 'url' && firstFrameData.existingPath) {
+                // 重试时使用已保存的帧路径
+                body.existing_first_frame_path = firstFrameData.existingPath;
+            } else if (firstFrameData.type === 'url' && firstFrameData.value) {
                 body.first_frame_url = firstFrameData.value;
             }
         }
@@ -1410,7 +1413,10 @@ async function handleGenerate() {
         if (lastFrameData) {
             if (lastFrameData.type === 'uploaded' && lastFrameData.fileId) {
                 body.last_frame_file_id = lastFrameData.fileId;
-            } else if (lastFrameData.type === 'url') {
+            } else if (lastFrameData.type === 'url' && lastFrameData.existingPath) {
+                // 重试时使用已保存的帧路径
+                body.existing_last_frame_path = lastFrameData.existingPath;
+            } else if (lastFrameData.type === 'url' && lastFrameData.value) {
                 body.last_frame_url = lastFrameData.value;
             }
         }
@@ -1484,13 +1490,21 @@ async function handleImageGenerate() {
             body.count = parseInt(document.getElementById('image-count').value);
         }
 
-        // 添加参考图片 (使用 file_id)
+        // 添加参考图片 (使用 file_id 或已保存的路径)
         if (referenceImages.length > 0) {
             const uploadedFileIds = referenceImages
                 .filter(img => img.type === 'uploaded' && img.fileId)
                 .map(img => img.fileId);
             if (uploadedFileIds.length > 0) {
                 body.file_ids = uploadedFileIds;
+            }
+
+            // 添加已保存的参考图路径 (重试时使用)
+            const existingPaths = referenceImages
+                .filter(img => img.type === 'url' && img.existingPath)
+                .map(img => img.existingPath);
+            if (existingPaths.length > 0) {
+                body.existing_ref_paths = existingPaths;
             }
         }
 
@@ -2076,6 +2090,7 @@ async function retryTask() {
 
                     renderRefImages();
                     updateImageGenerationType();
+                    updateImageGenerateButton();
 
                     if (loadedCount < refPaths.length) {
                         showToast(`${refPaths.length - loadedCount} 张参考图已过期，请重新上传`, 'warning');
@@ -2131,6 +2146,7 @@ async function retryTask() {
 
                     renderBananaRefImages();
                     updateBananaGenerationType();
+                    updateBananaGenerateButton();
 
                     if (loadedCount < refPaths.length) {
                         showToast(`${refPaths.length - loadedCount} 张参考图已过期，请重新上传`, 'warning');
@@ -2630,13 +2646,21 @@ async function handleBananaGenerate() {
             resolution: resolution,
         };
 
-        // 添加参考图片 (使用 file_id)
+        // 添加参考图片 (使用 file_id 或已保存的路径)
         if (bananaReferenceImages.length > 0) {
             const uploadedFileIds = bananaReferenceImages
                 .filter(img => img.type === 'uploaded' && img.fileId)
                 .map(img => img.fileId);
             if (uploadedFileIds.length > 0) {
                 body.file_ids = uploadedFileIds;
+            }
+
+            // 添加已保存的参考图路径 (重试时使用)
+            const existingPaths = bananaReferenceImages
+                .filter(img => img.type === 'url' && img.existingPath)
+                .map(img => img.existingPath);
+            if (existingPaths.length > 0) {
+                body.existing_ref_paths = existingPaths;
             }
         }
 
