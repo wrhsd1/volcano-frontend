@@ -81,12 +81,54 @@ let pollInterval = null;
 // ======================== 文件上传 ========================
 
 /**
- * 上传文件到服务器
+ * 计算文件的 SHA-256 hash
+ * @param {File} file - 文件对象
+ * @returns {Promise<string>} - 十六进制 hash 字符串
+ */
+async function calculateFileHash(file) {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    return Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * 上传文件到服务器 (支持秒传)
  * @param {File} file - 要上传的文件
  * @param {Function} onProgress - 进度回调 (0-100)
  * @returns {Promise<{ok: boolean, file_id: string, filename: string, size: number}>}
  */
-function uploadFile(file, onProgress) {
+async function uploadFile(file, onProgress) {
+    // 先计算 hash 尝试秒传
+    try {
+        const fileHash = await calculateFileHash(file);
+
+        // 检查服务器是否已有此文件
+        const checkResp = await fetch(`${API_BASE}/upload/check`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ hash: fileHash, filename: file.name })
+        });
+
+        if (checkResp.ok) {
+            const checkData = await checkResp.json();
+            if (checkData.exists && checkData.file_id) {
+                // 秒传成功
+                console.log(`[秒传] 文件已存在: ${checkData.file_id}`);
+                if (onProgress) onProgress(100);
+                return {
+                    ok: true,
+                    file_id: checkData.file_id,
+                    filename: checkData.filename || file.name,
+                    size: file.size
+                };
+            }
+        }
+    } catch (e) {
+        console.warn('Hash检查失败，继续正常上传:', e);
+    }
+
+    // 正常上传
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         const formData = new FormData();
@@ -126,6 +168,7 @@ function uploadFile(file, onProgress) {
         xhr.send(formData);
     });
 }
+
 
 /**
  * 删除已上传的文件
@@ -1385,8 +1428,8 @@ async function handleGenerate() {
             // 刷新账户额度和任务列表
             loadAccounts();
 
-            // 切换到队列页面
-            switchSection('queue');
+            // 不再跳转，留在当前页面方便继续提交
+            // switchSection('queue');
         } else {
             const data = await resp.json();
             showToast(data.detail || '创建任务失败', 'error');
@@ -1461,8 +1504,8 @@ async function handleImageGenerate() {
             const createdTasks = await resp.json();
             showToast(`已提交 ${createdTasks.length} 个图片任务，正在生成中...`, 'success');
 
-            // 切换到队列页面
-            switchSection('queue');
+            // 不再跳转，留在当前页面方便继续提交
+            // switchSection('queue');
         } else {
             const data = await resp.json();
             showToast(data.detail || '生成失败', 'error');
@@ -1717,9 +1760,14 @@ async function showTaskDetail(taskId) {
             } else if (params.ref_image_paths && params.ref_image_paths.length > 0) {
                 // 优化的图片任务：使用本地参考图
                 params.ref_image_paths.forEach((path, idx) => {
-                    // 提取文件名
                     const filename = path.split(/[/\\]/).pop();
-                    const url = `${API_BASE}/images/file/${task.task_id}/${filename}`;
+                    // 根据任务类型选择正确的 API 端点
+                    let url;
+                    if (task.task_type === 'banana_image') {
+                        url = `${API_BASE}/banana/images/file/${task.task_id}/${filename}`;
+                    } else {
+                        url = `${API_BASE}/images/file/${task.task_id}/${filename}`;
+                    }
                     refImages.push({ url, label: `参考${idx + 1}` });
                 });
             } else if (params.image) {
@@ -1892,7 +1940,242 @@ async function deleteSelectedTask() {
     }
 }
 
+/**
+ * 重试任务 - 回填参数到对应的生成页面
+ */
+async function retryTask() {
+    if (!selectedTaskId) return;
+
+    const task = tasks.find(t => t.task_id === selectedTaskId);
+    if (!task) {
+        showToast('任务不存在', 'error');
+        return;
+    }
+
+    let params = {};
+    try {
+        if (task.params) params = JSON.parse(task.params);
+    } catch (e) {
+        showToast('解析任务参数失败', 'error');
+        return;
+    }
+
+    // 根据任务类型跳转并回填
+    if (task.task_type === 'video') {
+        switchSection('generate');
+        switchMode('video');
+
+        if (params.prompt) document.getElementById('prompt-input').value = params.prompt;
+        if (params.ratio) document.getElementById('ratio').value = params.ratio;
+        if (params.resolution) document.getElementById('resolution').value = params.resolution;
+        if (params.duration) {
+            document.getElementById('duration').value = params.duration;
+            document.getElementById('duration-value').textContent = params.duration + '秒';
+        }
+        if (params.count) document.getElementById('video-count').value = params.count;
+
+        // 加载帧图片到 UI
+        const framePaths = params.frame_paths || {};
+        let pathsToCheck = [];
+        if (framePaths.first_frame) pathsToCheck.push(framePaths.first_frame);
+        if (framePaths.last_frame) pathsToCheck.push(framePaths.last_frame);
+
+        if (pathsToCheck.length > 0) {
+            try {
+                const resp = await fetch(`${API_BASE}/upload/check-files`, {
+                    method: 'POST',
+                    headers: authHeaders(),
+                    body: JSON.stringify({ paths: pathsToCheck })
+                });
+
+                if (resp.ok) {
+                    const data = await resp.json();
+
+                    // 加载首帧
+                    if (framePaths.first_frame && data.results[framePaths.first_frame]) {
+                        const filename = framePaths.first_frame.split(/[/\\]/).pop();
+                        const imageUrl = `${API_BASE}/tasks/video/frame/${task.task_id}/${filename}`;
+                        firstFrameData = {
+                            type: 'url',
+                            value: imageUrl,
+                            existingPath: framePaths.first_frame
+                        };
+                        showPreview('first-frame', imageUrl);
+                    }
+
+                    // 加载尾帧
+                    if (framePaths.last_frame && data.results[framePaths.last_frame]) {
+                        const filename = framePaths.last_frame.split(/[/\\]/).pop();
+                        const imageUrl = `${API_BASE}/tasks/video/frame/${task.task_id}/${filename}`;
+                        lastFrameData = {
+                            type: 'url',
+                            value: imageUrl,
+                            existingPath: framePaths.last_frame
+                        };
+                        showPreview('last-frame', imageUrl);
+                    }
+
+                    updateGenerationType();
+
+                    // 检查是否有过期的帧
+                    let expiredCount = 0;
+                    if (framePaths.first_frame && !data.results[framePaths.first_frame]) expiredCount++;
+                    if (framePaths.last_frame && !data.results[framePaths.last_frame]) expiredCount++;
+                    if (expiredCount > 0) {
+                        showToast(`${expiredCount} 张帧图片已过期，请重新上传`, 'warning');
+                    }
+                }
+            } catch (e) {
+                console.warn('加载帧图片失败:', e);
+                showToast('帧图片加载失败，请重新上传', 'warning');
+            }
+        }
+
+        showToast('已回填视频任务参数', 'success');
+
+    } else if (task.task_type === 'image') {
+        switchSection('generate');
+        switchMode('image');
+
+        if (params.prompt) document.getElementById('image-prompt-input').value = params.prompt;
+        if (params.sequential_image_generation === 'auto') {
+            document.getElementById('sequential-mode').checked = true;
+        }
+
+        // 加载参考图到 UI
+        const refPaths = params.ref_image_paths || [];
+        if (refPaths.length > 0) {
+            // 清空当前参考图
+            referenceImages = [];
+
+            // 检查文件是否存在并加载
+            try {
+                const resp = await fetch(`${API_BASE}/upload/check-files`, {
+                    method: 'POST',
+                    headers: authHeaders(),
+                    body: JSON.stringify({ paths: refPaths })
+                });
+
+                if (resp.ok) {
+                    const data = await resp.json();
+                    let loadedCount = 0;
+
+                    refPaths.forEach((path, idx) => {
+                        if (data.results[path]) {
+                            const filename = path.split(/[/\\]/).pop();
+                            const imageUrl = `${API_BASE}/images/file/${task.task_id}/${filename}`;
+                            referenceImages.push({
+                                name: filename,
+                                localPreview: imageUrl,
+                                type: 'url',  // 标记为已存在的 URL 类型
+                                existingPath: path
+                            });
+                            loadedCount++;
+                        }
+                    });
+
+                    renderRefImages();
+                    updateImageGenerationType();
+
+                    if (loadedCount < refPaths.length) {
+                        showToast(`${refPaths.length - loadedCount} 张参考图已过期，请重新上传`, 'warning');
+                    }
+                }
+            } catch (e) {
+                console.warn('加载参考图失败:', e);
+                showToast('参考图加载失败，请重新上传', 'warning');
+            }
+        }
+
+        showToast('已回填图片任务参数', 'success');
+
+    } else if (task.task_type === 'banana_image') {
+        switchSection('generate');
+        switchMode('banana');
+
+        if (params.prompt) document.getElementById('banana-prompt-input').value = params.prompt;
+        if (params.aspect_ratio) document.getElementById('banana-ratio').value = params.aspect_ratio;
+        if (params.resolution) document.getElementById('banana-resolution').value = params.resolution;
+
+        // 加载参考图到 UI
+        const refPaths = params.ref_image_paths || [];
+        if (refPaths.length > 0) {
+            // 清空当前参考图
+            bananaReferenceImages = [];
+
+            // 检查文件是否存在并加载
+            try {
+                const resp = await fetch(`${API_BASE}/upload/check-files`, {
+                    method: 'POST',
+                    headers: authHeaders(),
+                    body: JSON.stringify({ paths: refPaths })
+                });
+
+                if (resp.ok) {
+                    const data = await resp.json();
+                    let loadedCount = 0;
+
+                    refPaths.forEach((path, idx) => {
+                        if (data.results[path]) {
+                            const filename = path.split(/[/\\]/).pop();
+                            const imageUrl = `${API_BASE}/banana/images/file/${task.task_id}/${filename}`;
+                            bananaReferenceImages.push({
+                                name: filename,
+                                localPreview: imageUrl,
+                                type: 'url',
+                                existingPath: path
+                            });
+                            loadedCount++;
+                        }
+                    });
+
+                    renderBananaRefImages();
+                    updateBananaGenerationType();
+
+                    if (loadedCount < refPaths.length) {
+                        showToast(`${refPaths.length - loadedCount} 张参考图已过期，请重新上传`, 'warning');
+                    }
+                }
+            } catch (e) {
+                console.warn('加载Banana参考图失败:', e);
+                showToast('参考图加载失败，请重新上传', 'warning');
+            }
+        }
+
+        showToast('已回填 Banana 任务参数', 'success');
+
+    } else {
+        showToast('不支持重试此类型任务', 'warning');
+        return;
+    }
+
+    document.getElementById('task-detail').style.display = 'none';
+}
+
+/**
+ * 检查文件是否存在，如有过期则提示
+ */
+async function checkFilesExist(paths) {
+    try {
+        const resp = await fetch(`${API_BASE}/upload/check-files`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ paths: paths })
+        });
+        if (resp.ok) {
+            const data = await resp.json();
+            const hasExpired = paths.some(path => !data.results[path]);
+            if (hasExpired) {
+                showToast('部分参考图片已过期，请重新上传', 'warning');
+            }
+        }
+    } catch (e) {
+        console.warn('检查文件失败:', e);
+    }
+}
+
 // ======================== 批量操作 ========================
+
 
 function toggleTaskSelection(event, taskId) {
     event.stopPropagation();  // 防止触发任务选择
@@ -2370,8 +2653,8 @@ async function handleBananaGenerate() {
             // 刷新存储状态
             loadBananaStorage();
 
-            // 切换到队列页面
-            switchSection('queue');
+            // 不再跳转，留在当前页面方便继续提交
+            // switchSection('queue');
         } else {
             const data = await resp.json();
             showToast(data.detail || '生成失败', 'error');
@@ -2550,3 +2833,8 @@ async function cleanupVideoStorage() {
 
 window.loadVideoStorage = loadVideoStorage;
 window.cleanupVideoStorage = cleanupVideoStorage;
+
+// 任务操作函数暴露到 window (供 HTML onclick 调用)
+window.retryTask = retryTask;
+window.syncSelectedTask = syncSelectedTask;
+window.deleteSelectedTask = deleteSelectedTask;

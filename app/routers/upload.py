@@ -6,6 +6,7 @@
 import os
 import uuid
 import base64
+import hashlib
 import asyncio
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -37,6 +38,29 @@ class FileInfoResponse(BaseModel):
     base64_data: Optional[str] = None  # 可选的 base64 数据
 
 
+class CheckHashRequest(BaseModel):
+    """Hash 校验请求"""
+    hash: str  # SHA-256 hash
+    filename: str  # 原始文件名
+
+
+class CheckHashResponse(BaseModel):
+    """Hash 校验响应"""
+    exists: bool
+    file_id: Optional[str] = None
+    filename: Optional[str] = None
+
+
+class CheckFilesRequest(BaseModel):
+    """批量文件存在性校验请求"""
+    paths: list[str]  # 文件路径列表
+
+
+class CheckFilesResponse(BaseModel):
+    """批量文件存在性校验响应"""
+    results: dict[str, bool]  # path -> exists
+
+
 # ======================== 辅助函数 ========================
 
 def get_file_path(file_id: str) -> str:
@@ -50,23 +74,62 @@ def get_file_meta_path(file_id: str) -> str:
     return get_file_path(file_id) + ".meta"
 
 
-def save_file_meta(file_id: str, filename: str, size: int):
-    """保存文件元数据"""
+def save_file_meta(file_id: str, filename: str, size: int, file_hash: str = ""):
+    """保存文件元数据 (含 hash)"""
     meta_path = get_file_meta_path(file_id)
     with open(meta_path, 'w', encoding='utf-8') as f:
-        f.write(f"{filename}\n{size}\n{datetime.utcnow().isoformat()}")
+        f.write(f"{filename}\n{size}\n{datetime.utcnow().isoformat()}\n{file_hash}")
 
 
 def read_file_meta(file_id: str) -> tuple:
-    """读取文件元数据"""
+    """读取文件元数据 (filename, size, created_at, hash)"""
     meta_path = get_file_meta_path(file_id)
     if not os.path.exists(meta_path):
-        return None, None, None
+        return None, None, None, None
     with open(meta_path, 'r', encoding='utf-8') as f:
         lines = f.read().strip().split('\n')
-        if len(lines) >= 3:
-            return lines[0], int(lines[1]), lines[2]
-        return None, None, None
+        if len(lines) >= 4:
+            return lines[0], int(lines[1]), lines[2], lines[3]
+        elif len(lines) >= 3:
+            return lines[0], int(lines[1]), lines[2], None  # 兼容旧格式
+        return None, None, None, None
+
+
+def calculate_file_hash(file_path: str) -> str:
+    """计算文件的 SHA-256 hash"""
+    sha256 = hashlib.sha256()
+    with open(file_path, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            sha256.update(chunk)
+    return sha256.hexdigest()
+
+
+def find_file_by_hash(target_hash: str) -> Optional[str]:
+    """通过 hash 查找已存在的文件，返回 file_id"""
+    settings = get_settings()
+    upload_dir = settings.temp_uploads_dir
+    
+    if not os.path.exists(upload_dir):
+        return None
+    
+    for filename in os.listdir(upload_dir):
+        if filename.endswith('.meta'):
+            continue
+        
+        file_id = filename
+        file_path = os.path.join(upload_dir, file_id)
+        
+        # 检查文件是否存在
+        if not os.path.isfile(file_path):
+            continue
+        
+        # 读取 meta 获取 hash
+        _, _, _, stored_hash = read_file_meta(file_id)
+        
+        if stored_hash and stored_hash == target_hash:
+            return file_id
+    
+    return None
 
 
 def file_to_base64(file_path: str) -> str:
@@ -108,7 +171,7 @@ async def cleanup_old_files():
         
         # 读取元数据获取创建时间
         if os.path.exists(meta_path):
-            _, _, created_str = read_file_meta(filename)
+            _, _, created_str, _ = read_file_meta(filename)
             if created_str:
                 try:
                     created_at = datetime.fromisoformat(created_str)
@@ -171,8 +234,11 @@ async def upload_file(
             os.remove(file_path)
         raise HTTPException(status_code=500, detail=f"文件保存失败: {str(e)}")
     
-    # 保存元数据
-    save_file_meta(file_id, file.filename or "unknown", total_size)
+    # 计算文件 hash
+    file_hash = calculate_file_hash(file_path)
+    
+    # 保存元数据 (含 hash)
+    save_file_meta(file_id, file.filename or "unknown", total_size, file_hash)
     
     # 后台清理旧文件
     if background_tasks:
@@ -184,6 +250,50 @@ async def upload_file(
         filename=file.filename or "unknown",
         size=total_size
     )
+
+
+@router.post("/check", response_model=CheckHashResponse)
+async def check_file_hash(
+    request: CheckHashRequest,
+    user: dict = Depends(get_current_user)
+):
+    """
+    检查文件是否已存在 (通过 hash)
+    用于秒传功能，避免重复上传相同文件
+    """
+    existing_file_id = find_file_by_hash(request.hash)
+    
+    if existing_file_id:
+        # 验证文件确实存在
+        file_path = get_file_path(existing_file_id)
+        if os.path.exists(file_path):
+            filename, _, _, _ = read_file_meta(existing_file_id)
+            return CheckHashResponse(
+                exists=True,
+                file_id=existing_file_id,
+                filename=filename
+            )
+    
+    return CheckHashResponse(exists=False)
+
+
+@router.post("/check-files", response_model=CheckFilesResponse)
+async def check_files_exist(
+    request: CheckFilesRequest,
+    user: dict = Depends(get_current_user)
+):
+    """
+    批量检查文件路径是否存在 (用于重试时校验参考图)
+    """
+    results = {}
+    for path in request.paths:
+        # 安全检查
+        if ".." in path:
+            results[path] = False
+            continue
+        results[path] = os.path.exists(path)
+    
+    return CheckFilesResponse(results=results)
 
 
 @router.get("/{file_id}", response_model=FileInfoResponse)

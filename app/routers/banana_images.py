@@ -148,6 +148,27 @@ def save_base64_image(base64_data: str, task_dir: str, index: int) -> str:
     return filepath
 
 
+def save_banana_ref_image(base64_data: str, task_dir: str, index: int) -> str:
+    """保存参考图片到本地，返回文件路径"""
+    Path(task_dir).mkdir(parents=True, exist_ok=True)
+    
+    # 处理 data:image/xxx;base64, 前缀
+    if base64_data.startswith("data:"):
+        base64_start = base64_data.find(",") + 1
+        img_base64 = base64_data[base64_start:]
+    else:
+        img_base64 = base64_data
+    
+    image_data = base64.b64decode(img_base64)
+    filename = f"ref_{index}.png"
+    filepath = os.path.join(task_dir, filename)
+    
+    with open(filepath, 'wb') as f:
+        f.write(image_data)
+    
+    return filepath
+
+
 # ======================== 后台任务处理 ========================
 
 def run_async_task(coro):
@@ -397,6 +418,17 @@ async def create_banana_image(
     # 生成本地任务ID
     task_id = f"banana-{uuid.uuid4().hex[:16]}"
     
+    # 保存参考图片到本地 (新增)
+    saved_ref_paths = []
+    if final_images:
+        task_dir = os.path.join(settings.banana_images_dir, task_id)
+        for idx, img_data in enumerate(final_images):
+            try:
+                filepath = save_banana_ref_image(img_data, task_dir, idx)
+                saved_ref_paths.append(filepath)
+            except Exception as e:
+                logger.warning(f"保存Banana参考图片失败: {e}")
+    
     # 确定提交者标识
     submitted_by = "admin" if user.get("role") == "admin" else f"guest_{user.get('guest_id', '')}"
     
@@ -411,7 +443,8 @@ async def create_banana_image(
             "prompt": request.prompt,
             "aspect_ratio": request.aspect_ratio,
             "resolution": request.resolution,
-            "image_count": len(final_images)
+            "image_count": len(final_images),
+            "ref_image_paths": saved_ref_paths  # 新增: 保存参考图路径
         }, ensure_ascii=False),
         conversation_history=json.dumps(conversation_history, ensure_ascii=False),
         submitted_by=submitted_by,

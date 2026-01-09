@@ -957,7 +957,8 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 .task-detail {
     padding: var(--spacing-lg);
-    height: fit-content;
+    max-height: calc(100vh - 150px);
+    overflow-y: auto;
     position: sticky;
     top: var(--spacing-lg);
 }
@@ -993,6 +994,23 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 .detail-row .label {
     color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.detail-row .value {
+    text-align: right;
+    word-break: break-word;
+}
+
+.detail-row .value.prompt-text {
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 280px;
+    text-align: left;
+    line-height: 1.4;
 }
 
 .detail-row .value.error {

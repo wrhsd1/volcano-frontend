@@ -681,10 +681,14 @@
                                     <div class="images-grid" id="detail-images-grid"></div>
                                 </div>
                                 <div class="detail-actions">
-                                    <button id="sync-task-btn" class="btn btn-ghost">刷新状态</button>
+                                    <button id="retry-task-btn" class="btn btn-primary" onclick="retryTask()">🔄
+                                        重试任务</button>
+                                    <button id="sync-task-btn" class="btn btn-ghost"
+                                        onclick="syncSelectedTask()">刷新状态</button>
                                     <a id="download-video-btn" class="btn btn-primary" style="display: none;"
                                         target="_blank">下载视频</a>
-                                    <button id="delete-task-btn" class="btn btn-danger">删除任务</button>
+                                    <button id="delete-task-btn" class="btn btn-danger"
+                                        onclick="deleteSelectedTask()">删除任务</button>
                                 </div>
                             </div>
                         </div>
