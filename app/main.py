@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from .database import init_db, close_db
-from .routers import auth, accounts, tasks, images, banana_images, upload
+from .routers import auth, accounts, tasks, images, banana_images, upload, external_api
 
 
 @asynccontextmanager
@@ -35,6 +35,7 @@ app.include_router(tasks.router)
 app.include_router(images.router)
 app.include_router(banana_images.router)
 app.include_router(upload.router)
+app.include_router(external_api.router)  # 对外API
 
 # 静态文件
 app.mount("/static", StaticFiles(directory="static"), name="static")

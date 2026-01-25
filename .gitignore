@@ -10,6 +10,10 @@ env/
 ENV/
 status.py
 banana.md
+test_banana_api.py
+test_image_api.py
+test_banana_ref_api.py
+image_0_175049.png
 # IDE
 .idea/
 .vscode/
