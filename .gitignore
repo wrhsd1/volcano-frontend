@@ -13,6 +13,7 @@ banana.md
 test_banana_api.py
 test_image_api.py
 test_banana_ref_api.py
+test_video_api.py
 image_0_175049.png
 # IDE
 .idea/
@@ -28,7 +29,7 @@ image_0_175049.png
 *.db
 *.sqlite3
 data/
-
+test/
 # Logs
 *.log
 logs/

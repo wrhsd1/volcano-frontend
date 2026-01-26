@@ -417,7 +417,7 @@ async def create_banana_image(
             "responseModalities": ["TEXT", "IMAGE"],
             "imageConfig": {
                 "aspectRatio": request.aspect_ratio,
-                "imageSize": request.resolution
+                "image_size": request.resolution
             }
         }
     }
