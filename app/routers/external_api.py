@@ -641,11 +641,7 @@ async def generate_banana_image(
         }
     }
     
-    # 保存对话历史
-    conversation_history = [
-        {"role": "user", "parts": parts}
-    ]
-    
+
     # 保存任务到数据库
     params_to_store = {
         "prompt": request.prompt,
@@ -664,7 +660,7 @@ async def generate_banana_image(
         status="running",
         generation_type=generation_type,
         params=json.dumps(params_to_store, ensure_ascii=False),
-        conversation_history=json.dumps(conversation_history, ensure_ascii=False),
+        conversation_history=None,  # 不再保存对话历史
         submitted_by=submitted_by,
     )
     
@@ -679,8 +675,7 @@ async def generate_banana_image(
         account.banana_base_url,
         account.banana_api_key,
         account.banana_model_name or "gemini-3-pro-image-preview",
-        account.id,
-        conversation_history
+        account.id
     )
     
     return {
@@ -758,7 +753,7 @@ async def continue_banana_image(
     """
     Banana 多轮对话
     
-    继续修改已生成的图片
+    继续修改已生成的图片 - 从 result_urls/params 重构对话历史
     """
     settings = get_settings()
     
@@ -766,65 +761,148 @@ async def continue_banana_image(
     result = await db.execute(
         select(Task).options(selectinload(Task.account)).where(Task.task_id == task_id)
     )
-    task = result.scalar_one_or_none()
+    original_task = result.scalar_one_or_none()
     
-    if not task:
+    if not original_task:
         raise HTTPException(status_code=404, detail="任务不存在")
     
-    if task.task_type != "banana_image":
+    if original_task.task_type != "banana_image":
         raise HTTPException(status_code=400, detail="该任务不是 Banana 任务")
     
-    if task.status != "succeeded":
+    if original_task.status != "succeeded":
         raise HTTPException(status_code=400, detail="任务未完成，无法继续对话")
     
-    account = task.account
+    account = original_task.account
     if not account or not account.banana_api_key:
         raise HTTPException(status_code=400, detail="账户 Banana 配置无效")
     
-    # 获取对话历史
-    conversation_history = []
-    if task.conversation_history:
-        try:
-            conversation_history = json.loads(task.conversation_history)
-        except:
-            pass
+    # 从 result_urls 和 params 重构对话历史
+    # 遍历任务链，收集所有历史对话
+    task_chain = []
+    current_task = original_task
     
-    # 添加新的用户消息
-    conversation_history.append({
+    while current_task:
+        task_chain.insert(0, current_task)  # 插入到开头，保持时间顺序
+        
+        # 检查是否有父任务
+        try:
+            params = json.loads(current_task.params or "{}")
+            parent_task_id = params.get("parent_task_id")
+            if parent_task_id:
+                result = await db.execute(
+                    select(Task).where(Task.task_id == parent_task_id)
+                )
+                current_task = result.scalar_one_or_none()
+            else:
+                current_task = None
+        except:
+            current_task = None
+    
+    # 构建 Gemini API 的 contents 数组
+    contents = []
+    
+    for task_item in task_chain:
+        try:
+            params = json.loads(task_item.params or "{}")
+            prompt = params.get("prompt", "")
+            ref_image_paths = params.get("ref_image_paths", [])
+            
+            # 用户消息: 提示词 + 参考图
+            user_parts = []
+            if prompt:
+                user_parts.append({"text": prompt})
+            
+            # 添加参考图 (如果有)
+            for ref_path in ref_image_paths:
+                if os.path.exists(ref_path):
+                    with open(ref_path, "rb") as f:
+                        img_data = base64.b64encode(f.read()).decode()
+                    user_parts.append({
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": img_data
+                        }
+                    })
+            
+            if user_parts:
+                contents.append({"role": "user", "parts": user_parts})
+            
+            # 模型响应: 生成的图片
+            result_urls = json.loads(task_item.result_urls or "[]")
+            model_parts = []
+            
+            for result_item in result_urls:
+                result_path = result_item.get("path", "")
+                if result_path and os.path.exists(result_path):
+                    with open(result_path, "rb") as f:
+                        img_data = base64.b64encode(f.read()).decode()
+                    model_parts.append({
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": img_data
+                        }
+                    })
+            
+            if model_parts:
+                contents.append({"role": "model", "parts": model_parts})
+                
+        except Exception as e:
+            continue
+    
+    # 添加新的用户请求
+    contents.append({
         "role": "user",
         "parts": [{"text": request.prompt}]
     })
     
-    # 更新任务状态
-    task.status = "running"
-    task.conversation_history = json.dumps(conversation_history, ensure_ascii=False)
-    await db.commit()
-    
     # 构建 API 请求
     api_request = {
-        "contents": conversation_history,
+        "contents": contents,
         "generationConfig": {
             "responseModalities": ["TEXT", "IMAGE"],
         }
     }
     
+    # 创建新任务记录
+    new_task_id = f"banana-{uuid.uuid4().hex[:16]}"
+    
+    submitted_by = original_task.submitted_by or ("admin" if user.get("role") == "admin" else f"guest_{user.get('guest_id', '')}")
+    
+    new_task = Task(
+        task_id=new_task_id,
+        account_id=account.id,
+        task_type="banana_image",
+        status="running",
+        generation_type="continue",
+        params=json.dumps({
+            "prompt": request.prompt,
+            "parent_task_id": task_id
+        }, ensure_ascii=False),
+        conversation_history=None,
+        submitted_by=submitted_by,
+    )
+    
+    db.add(new_task)
+    await db.commit()
+    await db.refresh(new_task)
+    
     # 启动后台任务
     start_banana_background_task(
-        task_id,
+        new_task_id,
         api_request,
         account.banana_base_url,
         account.banana_api_key,
         account.banana_model_name or "gemini-3-pro-image-preview",
-        account.id,
-        conversation_history
+        account.id
     )
     
     return {
         "ok": True,
-        "task_id": task_id,
+        "task_id": new_task_id,
         "status": "running",
         "message": "继续对话已提交"
     }
+
 
 
 # ======================== 账户查询 API ========================

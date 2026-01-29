@@ -187,17 +187,17 @@ def run_async_task(coro):
         loop.close()
 
 
-def start_banana_background_task(task_id: str, api_request: dict, base_url: str, api_key: str, model_name: str, account_id: int, conversation_history: list):
+def start_banana_background_task(task_id: str, api_request: dict, base_url: str, api_key: str, model_name: str, account_id: int):
     """启动后台线程执行图片生成"""
     thread = threading.Thread(
         target=run_async_task,
-        args=(process_banana_task(task_id, api_request, base_url, api_key, model_name, account_id, conversation_history),)
+        args=(process_banana_task(task_id, api_request, base_url, api_key, model_name, account_id),)
     )
     thread.daemon = True
     thread.start()
 
 
-async def process_banana_task(task_id: str, api_request: dict, base_url: str, api_key: str, model_name: str, account_id: int, conversation_history: list):
+async def process_banana_task(task_id: str, api_request: dict, base_url: str, api_key: str, model_name: str, account_id: int):
     """后台处理 Banana 图片生成任务"""
     settings = get_settings()
     
@@ -259,9 +259,6 @@ async def process_banana_task(task_id: str, api_request: dict, base_url: str, ap
                 content = candidates[0].get("content", {})
                 parts = content.get("parts", [])
                 
-                # 更新对话历史
-                model_response_parts = []
-                
                 for i, part in enumerate(parts):
                     if "inlineData" in part:
                         inline_data = part["inlineData"]
@@ -272,18 +269,6 @@ async def process_banana_task(task_id: str, api_request: dict, base_url: str, ap
                                 filepath = save_base64_image(image_base64, task_dir, image_count)
                                 result_paths.append({"path": filepath, "index": image_count})
                                 image_count += 1
-                                model_response_parts.append({"type": "image", "path": filepath})
-                    elif "text" in part:
-                        text = part.get("text", "")
-                        if text and not part.get("thought"):  # 排除思考过程
-                            model_response_parts.append({"type": "text", "content": text})
-                
-                # 添加模型响应到对话历史
-                if model_response_parts:
-                    conversation_history.append({
-                        "role": "model",
-                        "parts": model_response_parts
-                    })
             
             # 更新任务状态为成功
             result = await db.execute(select(Task).where(Task.task_id == task_id))
@@ -292,7 +277,7 @@ async def process_banana_task(task_id: str, api_request: dict, base_url: str, ap
                 task.status = "succeeded"
                 task.result_urls = json.dumps(result_paths, ensure_ascii=False)
                 task.image_count = image_count
-                task.conversation_history = json.dumps(conversation_history, ensure_ascii=False)
+                # 不再保存 conversation_history，从 result_urls/params 重构
                 task.updated_at = datetime.utcnow()
                 await db.commit()
                 
@@ -413,27 +398,14 @@ async def create_banana_image(
     
     api_request = {
         "contents": [{"parts": parts}],
-        "generationConfig": {
-            "responseModalities": ["TEXT", "IMAGE"],
-            "imageConfig": {
-                "aspectRatio": request.aspect_ratio,
+        "generation_config": {
+            "response_modalities": ["TEXT", "IMAGE"],
+            "image_config": {
+                "aspect_ratio": request.aspect_ratio,
                 "image_size": request.resolution
             }
         }
     }
-    
-    # 初始化对话历史
-    conversation_history = [{
-        "role": "user",
-        "parts": [{"type": "text", "content": request.prompt}]
-    }]
-    
-    # 如果有参考图片，也记录到历史
-    if final_images:
-        conversation_history[0]["parts"].append({
-            "type": "images",
-            "count": len(final_images)
-        })
     
     # 生成本地任务ID
     task_id = f"banana-{uuid.uuid4().hex[:16]}"
@@ -466,7 +438,7 @@ async def create_banana_image(
             "image_count": len(final_images),
             "ref_image_paths": saved_ref_paths  # 新增: 保存参考图路径
         }, ensure_ascii=False),
-        conversation_history=json.dumps(conversation_history, ensure_ascii=False),
+        conversation_history=None,  # 不再保存对话历史，从 result_urls/params 重构
         submitted_by=submitted_by,
     )
     
@@ -481,7 +453,7 @@ async def create_banana_image(
     start_banana_background_task(
         task_id, api_request, 
         account.banana_base_url, account.banana_api_key, model_name,
-        account.id, conversation_history
+        account.id
     )
     
     # 清理使用完毕的临时上传文件
@@ -515,7 +487,7 @@ async def continue_banana_image(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """多轮修改 Banana 图片"""
+    """多轮修改 Banana 图片 - 从 result_urls/params 重构对话历史"""
     settings = get_settings()
     
     # 获取原任务
@@ -537,34 +509,79 @@ async def continue_banana_image(
     if not account or not account.banana_base_url or not account.banana_api_key:
         raise HTTPException(status_code=400, detail="账户 Banana API 配置无效")
     
-    # 解析对话历史
-    conversation_history = json.loads(original_task.conversation_history or "[]")
+    # 从 result_urls 和 params 重构对话历史
+    # 遍历任务链，收集所有历史对话
+    task_chain = []
+    current_task = original_task
     
-    # 构建多轮请求 - 包含完整对话历史
+    while current_task:
+        task_chain.insert(0, current_task)  # 插入到开头，保持时间顺序
+        
+        # 检查是否有父任务
+        try:
+            params = json.loads(current_task.params or "{}")
+            parent_task_id = params.get("parent_task_id")
+            if parent_task_id:
+                result = await db.execute(
+                    select(Task).where(Task.task_id == parent_task_id)
+                )
+                current_task = result.scalar_one_or_none()
+            else:
+                current_task = None
+        except:
+            current_task = None
+    
+    # 构建 Gemini API 的 contents 数组
     contents = []
     
-    for turn in conversation_history:
-        role = turn.get("role", "user")
-        parts = []
-        
-        for part in turn.get("parts", []):
-            if part.get("type") == "text":
-                parts.append({"text": part.get("content", "")})
-            elif part.get("type") == "image":
-                # 读取本地图片并转为 base64
-                image_path = part.get("path", "")
-                if os.path.exists(image_path):
-                    with open(image_path, "rb") as f:
+    for task_item in task_chain:
+        try:
+            params = json.loads(task_item.params or "{}")
+            prompt = params.get("prompt", "")
+            ref_image_paths = params.get("ref_image_paths", [])
+            
+            # 用户消息: 提示词 + 参考图
+            user_parts = []
+            if prompt:
+                user_parts.append({"text": prompt})
+            
+            # 添加参考图 (如果有)
+            for ref_path in ref_image_paths:
+                if os.path.exists(ref_path):
+                    with open(ref_path, "rb") as f:
                         img_data = base64.b64encode(f.read()).decode()
-                    parts.append({
+                    user_parts.append({
                         "inlineData": {
                             "mimeType": "image/png",
                             "data": img_data
                         }
                     })
-        
-        if parts:
-            contents.append({"role": role, "parts": parts})
+            
+            if user_parts:
+                contents.append({"role": "user", "parts": user_parts})
+            
+            # 模型响应: 生成的图片
+            result_urls = json.loads(task_item.result_urls or "[]")
+            model_parts = []
+            
+            for result_item in result_urls:
+                result_path = result_item.get("path", "")
+                if result_path and os.path.exists(result_path):
+                    with open(result_path, "rb") as f:
+                        img_data = base64.b64encode(f.read()).decode()
+                    model_parts.append({
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": img_data
+                        }
+                    })
+            
+            if model_parts:
+                contents.append({"role": "model", "parts": model_parts})
+                
+        except Exception as e:
+            logger.warning(f"解析任务 {task_item.task_id} 失败: {e}")
+            continue
     
     # 添加新的用户请求
     contents.append({
@@ -572,16 +589,10 @@ async def continue_banana_image(
         "parts": [{"text": request.prompt}]
     })
     
-    # 更新对话历史
-    conversation_history.append({
-        "role": "user",
-        "parts": [{"type": "text", "content": request.prompt}]
-    })
-    
     api_request = {
         "contents": contents,
-        "generationConfig": {
-            "responseModalities": ["TEXT", "IMAGE"]
+        "generation_config": {
+            "response_modalities": ["TEXT", "IMAGE"]
         }
     }
     
@@ -601,7 +612,7 @@ async def continue_banana_image(
             "prompt": request.prompt,
             "parent_task_id": task_id
         }, ensure_ascii=False),
-        conversation_history=json.dumps(conversation_history, ensure_ascii=False),
+        conversation_history=None,  # 不再保存对话历史
         submitted_by=submitted_by,
     )
     
@@ -616,7 +627,7 @@ async def continue_banana_image(
     start_banana_background_task(
         new_task_id, api_request,
         account.banana_base_url, account.banana_api_key, model_name,
-        account.id, conversation_history
+        account.id
     )
     
     return BananaTaskResponse(
